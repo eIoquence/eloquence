@@ -1,0 +1,59 @@
+name: Kernel builds
+
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: kernel-build-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  build:
+    name: ${{ matrix.architecture }}
+    runs-on: ubuntu-24.04
+    timeout-minutes: 20
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - architecture: x86_64
+            target: iso
+            artifact: build/eloquence.iso
+          - architecture: aarch64
+            target: aarch64-elf
+            artifact: build/aarch64/eloquence.elf
+          - architecture: riscv64
+            target: riscv64-elf
+            artifact: build/riscv64/eloquence.elf
+
+    steps:
+      - name: Check out source
+        uses: actions/checkout@v7.0.1
+
+      - name: Install build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes \
+            build-essential \
+            ca-certificates \
+            clang \
+            curl \
+            lld \
+            tar \
+            xorriso
+
+      - name: Build ${{ matrix.architecture }}
+        run: make ${{ matrix.target }}
+
+      - name: Upload build artifact
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: eloquence-${{ matrix.architecture }}
+          path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14

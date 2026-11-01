@@ -43,6 +43,8 @@ QEMU is the functional baseline. Timing results from emulation will not be prese
 
 Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, and `xorriso`. Running the x86-64 image also requires `qemu-system-x86_64`.
 
+GitHub Actions builds the x86-64 ISO and linked AArch64 and RV64 ELF kernels on pushes and pull requests. Build artifacts are retained for 14 days. The workflow compiles and packages the outputs without launching an emulator. Dependabot checks the GitHub Actions dependencies weekly.
+
 ```sh
 make iso
 make run
