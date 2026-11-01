@@ -64,7 +64,7 @@ These items depend on a working baseline and evidence that the initial lifecycle
 
 The first end-to-end device experiment will use a QEMU-emulated PCI device with an MMIO region.
 
-The PCI scanner is read-only: it discovers functions and decodes BAR fields. A separate targeted transaction probes BAR0 size only on QEMU's educational PCI device, with I/O and memory decoding disabled and original configuration restored. A BAR base alone does not define a grantable range; safe MMIO mappings and capability-controlled access are separate implementation steps.
+The PCI scanner is read-only: it discovers functions and decodes BAR fields. A separate targeted transaction probes BAR0 size only on QEMU's educational PCI device, with I/O and memory decoding disabled and original configuration restored. The current kernel then maps this range uncached, reads the device ID, checks the liveness register, and unmaps it. This is a kernel-only access path; it does not demonstrate isolation between protection domains. The Limine HHDM omits ordinary reserved memory in the requested base revision, so the mapper creates a separate virtual mapping and rejects ranges that overlap HHDM-mapped memory.
 
 The prototype should capture:
 

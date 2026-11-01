@@ -14,13 +14,14 @@ The project does not claim novelty for capability systems or exokernels in gener
 
 ## Current status
 
-Kernel bring-up is in progress. The source includes Limine boot information, serial diagnostics, a monotonic page allocator, read-only PCI inventory, and a targeted BAR size probe for QEMU's educational PCI device. Local QEMU execution is pending; MMIO mapping and capability-controlled access remain future work. See:
+Kernel bring-up is in progress. The source includes Limine boot information, serial diagnostics, a monotonic page allocator, read-only PCI inventory, a targeted BAR size probe, and a kernel-only MMIO map/read/write/unmap exercise for QEMU's educational PCI device. Runtime validation is pending; user-domain isolation and capability-controlled access remain future work. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [ADR-0001: Research Scope and Initial Platform](docs/adr/0001-research-scope-and-platform.md)
 - [ADR-0002: Bootstrap Physical Page Allocation](docs/adr/0002-bootstrap-page-allocation.md)
 - [ADR-0003: Initial PCI Configuration Discovery](docs/adr/0003-pci-configuration-discovery.md)
 - [ADR-0004: QEMU EDU Resource Sizing](docs/adr/0004-qemu-edu-resource-sizing.md)
+- [ADR-0005: Bootstrap MMIO Mapping](docs/adr/0005-bootstrap-mmio-mapping.md)
 
 ## v0.1 target
 
@@ -47,4 +48,4 @@ The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-
 
 The Limine protocol header is vendored from [limine-protocol](https://github.com/Limine-Bootloader/limine-protocol) at commit `6e85ddd6f928b5b512015c4d47d1cfce2fd28079`; its 0BSD notice is preserved in `include/limine.h`.
 
-The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator can hand out 4 KiB pages from usable regions. PCI discovery reads conventional configuration space and reports function IDs and BAR fields. For the explicitly configured QEMU EDU device only, it temporarily disables I/O and memory decoding to size BAR0, restores the original registers, and reports the result. It does not map MMIO, free pages, handle interrupts, or grant hardware capabilities yet.
+The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator hands out 4 KiB pages from usable regions. PCI discovery reads conventional configuration space and reports function IDs and BAR fields. For the explicitly configured QEMU EDU device only, it temporarily disables I/O and memory decoding to size BAR0, restores the original registers, maps the range as uncached device memory, reads the device ID, checks the liveness register, then unmaps the range. The mapping code is kernel-only; it does not provide user-domain protection, free page-table frames, handle interrupts, or grant hardware capabilities yet.

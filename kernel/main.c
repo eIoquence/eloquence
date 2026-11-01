@@ -1,8 +1,10 @@
+#include <stdbool.h>
 #include <stdint.h>
 
 #include <limine.h>
 
 #include "pci.h"
+#include "mmio.h"
 #include "memory/page_allocator.h"
 #include "serial.h"
 
@@ -25,6 +27,15 @@ __attribute__((used, section(".limine_requests")))
 static volatile struct limine_hhdm_request hhdm_request = {
     .id = LIMINE_HHDM_REQUEST_ID,
     .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_paging_mode_request paging_mode_request = {
+    .id = LIMINE_PAGING_MODE_REQUEST_ID,
+    .revision = 0,
+    .mode = LIMINE_PAGING_MODE_X86_64_4LVL,
+    .max_mode = LIMINE_PAGING_MODE_X86_64_4LVL,
+    .min_mode = LIMINE_PAGING_MODE_X86_64_4LVL
 };
 
 __attribute__((used, section(".limine_requests_start")))
@@ -121,7 +132,7 @@ static void report_page_allocator(void) {
 
 static void report_pci_device(const struct pci_device_info *device,
                               void *context) {
-    (void)context;
+    const bool *mmio_available = context;
 
     serial_write("PCI ");
     serial_write_decimal(device->bus);
@@ -170,18 +181,58 @@ static void report_pci_device(const struct pci_device_info *device,
             const struct pci_bar_info *bar = &device->bars[i];
             uint64_t size;
 
-            if (bar->index == 0 && bar->kind == PCI_BAR_MEMORY
-                && pci_probe_bar_size(device, bar, &size)) {
+            if (bar->index == 0 && bar->kind == PCI_BAR_MEMORY) {
+                if (!pci_probe_bar_size(device, bar, &size)) {
+                    serial_write("  EDU BAR0 size probe failed\n");
+                    continue;
+                }
+
                 serial_write("  EDU BAR0 size=0x");
                 serial_write_hex(size);
                 serial_write("\n");
+
+                if (size < 8 || !*mmio_available) {
+                    continue;
+                }
+
+                struct x86_mmio_mapping mapping = {0};
+                if (!x86_mmio_map_range(bar->base_address, size, &mapping)) {
+                    serial_write("  EDU BAR0 MMIO map failed\n");
+                    continue;
+                }
+
+                volatile uint32_t *registers =
+                    (volatile uint32_t *)mapping.address;
+                uint32_t device_id = registers[0];
+                uint32_t previous = registers[1];
+                uint32_t probe_value = 0x5a5aa5a5;
+                registers[1] = probe_value;
+                uint32_t observed = registers[1];
+                registers[1] = ~previous;
+                uint32_t restored = registers[1];
+
+                serial_write("  EDU MMIO id=0x");
+                serial_write_hex32(device_id);
+                serial_write(" liveness=");
+                serial_write(observed == ~probe_value && restored == previous
+                                 ? "pass\n" : "fail\n");
+
+                if (!x86_mmio_unmap(&mapping)) {
+                    serial_write("  EDU BAR0 MMIO unmap failed\n");
+                }
             }
         }
     }
 }
 
 static void report_pci_devices(void) {
-    uint64_t found = pci_enumerate(report_pci_device, 0);
+    bool mmio_available = x86_mmio_initialize(memory_map_request.response,
+                                               hhdm_request.response->offset);
+    if (!mmio_available) {
+        serial_write("MMIO mapping setup unavailable; EDU access skipped\n");
+    }
+
+    uint64_t found = pci_enumerate(report_pci_device, &mmio_available);
 
     serial_write("PCI functions discovered: ");
     serial_write_decimal(found);
@@ -194,6 +245,10 @@ void kmain(void) {
 
     if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)) {
         panic("unsupported Limine base revision");
+    }
+    if (paging_mode_request.response == 0
+        || paging_mode_request.response->mode != LIMINE_PAGING_MODE_X86_64_4LVL) {
+        panic("Limine did not select the requested 4-level paging mode");
     }
 
     if (bootloader_request.response != 0
