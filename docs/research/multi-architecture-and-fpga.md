@@ -92,6 +92,15 @@ Timer/IPI calls cross the firmware boundary through discovered SBI extensions.
 PLIC and AIA are distinct interrupt-controller configurations and must be
 recorded separately.
 
+The first source slice requests Limine base revision 6, Sv39, the BSP hart ID,
+memory map, and DTB, then reports the handoff through the SBI legacy console
+putchar call. `make riscv64-objects` is available, but the current local Clang
+has no RISC-V backend, so the source has not been compiler-validated. The
+legacy SBI console path is only an early QEMU/OpenSBI diagnostic; the next
+platform step is to discover the UART from the generated DTB and add the
+DTB-driven MMIO and interrupt-controller adapters. A linked ELF and repeatable
+boot observation remain outstanding.
+
 For FPGA work, CVA6 is a candidate because its upstream project targets both
 FPGA and ASIC, documents a 64-bit Sv39 configuration, and maintains FPGA
 integration guidance. A second candidate is the Shakti C reference platform,

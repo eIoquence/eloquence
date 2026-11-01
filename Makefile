@@ -39,6 +39,21 @@ AARCH64_LDFLAGS ?= --target=aarch64-unknown-none-elf -fuse-ld=lld \
 	-Wl,-z,max-page-size=0x1000 -Wl,-z,noexecstack \
 	-Wl,-T,linker-aarch64.ld
 
+RISCV64_CFLAGS ?= --target=riscv64-unknown-none-elf -std=gnu11 -O2 \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+	-fno-stack-check -fno-pic -fno-pie -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections \
+	-MMD -MP -march=rv64imac_zicsr -mabi=lp64 -mcmodel=medany -mno-relax \
+	-nostdinc -isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel \
+	-Ikernel/arch/riscv64
+RISCV64_ASFLAGS ?= --target=riscv64-unknown-none-elf -ffreestanding \
+	-fno-pic -fno-pie -march=rv64imac_zicsr -mabi=lp64 \
+	-mcmodel=medany -mno-relax
+RISCV64_LDFLAGS ?= --target=riscv64-unknown-none-elf -fuse-ld=lld \
+	-nostdlib -static -Wl,--build-id=none -Wl,--gc-sections \
+	-Wl,--no-relax -Wl,-z,max-page-size=0x1000 \
+	-Wl,-T,linker-riscv64.ld
+
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/serial.o \
 	build/arch/x86_64/pci.o build/arch/x86_64/paging.o \
@@ -47,11 +62,15 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/capability/mmio_capability.o build/memory/page_allocator.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
 	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
+RISCV64_OBJECTS := build/riscv64/arch/riscv64/main.o \
+	build/riscv64/arch/riscv64/console.o build/riscv64/arch/riscv64/irq.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
 -include $(AARCH64_OBJECTS:.o=.d)
+-include $(RISCV64_OBJECTS:.o=.d)
 
-.PHONY: all iso run aarch64-objects aarch64-elf clean
+.PHONY: all iso run aarch64-objects aarch64-elf riscv64-objects \
+	riscv64-elf clean
 
 all: iso
 
@@ -102,6 +121,21 @@ build/aarch64/eloquence.elf: $(AARCH64_OBJECTS) linker-aarch64.ld
 	$(TARGET_CC) $(AARCH64_LDFLAGS) -o $@ $(AARCH64_OBJECTS)
 
 aarch64-elf: build/aarch64/eloquence.elf
+
+build/riscv64/%.o: kernel/%.c
+	mkdir -p $(@D)
+	$(TARGET_CC) $(RISCV64_CFLAGS) -c $< -o $@
+
+build/riscv64/%.o: kernel/%.S
+	mkdir -p $(@D)
+	$(TARGET_CC) $(RISCV64_ASFLAGS) -c $< -o $@
+
+riscv64-objects: $(RISCV64_OBJECTS)
+
+build/riscv64/eloquence.elf: $(RISCV64_OBJECTS) linker-riscv64.ld
+	$(TARGET_CC) $(RISCV64_LDFLAGS) -o $@ $(RISCV64_OBJECTS)
+
+riscv64-elf: build/riscv64/eloquence.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_CC) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)

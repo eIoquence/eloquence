@@ -8,7 +8,7 @@ The initial research focus is a hardware resource lifecycle:
 
 `Discovery → Authorization → Allocation → Ownership → Revocation → Release`
 
-The first functional baseline targets x86-64 under QEMU. An initial AArch64 Limine bootstrap slice now provides framebuffer diagnostics and has a separate object-compilation target; it has not yet been linked or booted. RV64, the RV64 FPGA experiment, and MIPS remain planned. The first hardware-facing slice is PCI device discovery and controlled MMIO access. DMA/IOMMU and physical-hardware performance claims remain later work.
+The first functional baseline targets x86-64 under QEMU. Initial AArch64 and RV64 Limine bootstrap slices now have separate build targets; AArch64 object compilation succeeds, while the local Clang has no RISC-V backend. Neither new architecture has been linked or booted. The RV64 FPGA experiment and MIPS remain planned. The first hardware-facing slice is PCI device discovery and controlled MMIO access. DMA/IOMMU and physical-hardware performance claims remain later work.
 
 The project does not claim novelty for capability systems or exokernels in general. Research claims will be made only after comparison with prior systems and reproducible experiments.
 
@@ -59,6 +59,10 @@ linked-image check, PL011 setup through a device-tree-derived MMIO mapping, and
 a repeatable boot observation before it can be described as supported. Until
 that UART path exists, the bootstrap requires a compatible framebuffer and
 halts without visible diagnostics if Limine provides none.
+
+The RV64 bootstrap requests Sv39 and uses the SBI legacy console for early
+diagnostics. Its objects could not be compiled in the current environment
+because the installed Clang does not include a RISC-V target backend.
 
 The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-256 before use. `make clean` removes generated files and the downloaded bootloader.
 
