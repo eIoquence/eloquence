@@ -14,7 +14,7 @@ The project does not claim novelty for capability systems or exokernels in gener
 
 ## Current status
 
-Research foundation. The repository is defining its initial architecture and experiment before adding kernel subsystems. See:
+Kernel bring-up is in progress. The initial Limine entry, serial diagnostics, and memory map report are implemented; local QEMU execution is pending. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [ADR-0001: Research Scope and Initial Platform](docs/adr/0001-research-scope-and-platform.md)
@@ -32,4 +32,15 @@ QEMU is the functional baseline. Timing results from emulation will not be prese
 
 ## Development
 
-Build and run instructions will be added with the first bootable kernel milestone. Until then, the research and architecture documents are the source of truth for the v0.1 scope.
+Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, and `xorriso`. Running the image also requires `qemu-system-x86_64`.
+
+```sh
+make iso
+make run
+```
+
+The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-256 before use. `make clean` removes generated files and the downloaded bootloader.
+
+The Limine protocol header is vendored from [limine-protocol](https://github.com/Limine-Bootloader/limine-protocol) at commit `6e85ddd6f928b5b512015c4d47d1cfce2fd28079`; its 0BSD notice is preserved in `include/limine.h`.
+
+The kernel requests bootloader information and the physical memory map, then reports them over COM1. It does not allocate memory, handle interrupts, or grant hardware capabilities yet.
