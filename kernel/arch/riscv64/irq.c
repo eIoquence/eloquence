@@ -11,6 +11,8 @@ arch_irq_state_t arch_irq_save(void) {
 void arch_irq_restore(arch_irq_state_t state) {
     if ((state & 2) != 0) {
         __asm__ volatile ("csrsi sstatus, 2" : : : "memory");
+    } else {
+        __asm__ volatile ("csrci sstatus, 2" : : : "memory");
     }
 }
 

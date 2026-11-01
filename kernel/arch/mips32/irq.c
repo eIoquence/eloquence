@@ -9,6 +9,8 @@ arch_irq_state_t arch_irq_save(void) {
 void arch_irq_restore(arch_irq_state_t state) {
     if ((state & 1) != 0) {
         __asm__ volatile ("ei; ehb" : : : "memory");
+    } else {
+        __asm__ volatile ("di; ehb" : : : "memory");
     }
 }
 
