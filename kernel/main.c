@@ -5,6 +5,7 @@
 
 #include "pci.h"
 #include "mmio.h"
+#include "exceptions.h"
 #include "capability/mmio_capability.h"
 #include "memory/page_allocator.h"
 #include "serial.h"
@@ -170,6 +171,8 @@ static void report_capability_audit(void) {
         serial_write_decimal(events[i].sequence);
         serial_write(" domain=");
         serial_write_decimal(events[i].actor_domain);
+        serial_write(" owner=");
+        serial_write_decimal(events[i].owner_domain);
         serial_write(" op=");
         serial_write(capability_operation_name(events[i].operation));
         serial_write(" result=");
@@ -379,6 +382,7 @@ static void report_pci_devices(void) {
 
 void kmain(void) {
     serial_initialize();
+    x86_exceptions_initialize();
     serial_write("Eloquence x86-64 kernel\n");
 
     if (!LIMINE_BASE_REVISION_SUPPORTED(limine_base_revision)) {

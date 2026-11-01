@@ -5,6 +5,8 @@ SHELL := /bin/sh
 TARGET_CC ?= clang
 HOST_CC ?= cc
 QEMU ?= qemu-system-x86_64
+TARGET_ASFLAGS ?= --target=x86_64-unknown-none-elf -ffreestanding \
+	-fno-pic -fno-pie -m64 -mno-red-zone -mcmodel=kernel
 
 LIMINE_VERSION := v12.9.6
 LIMINE_SHA256 := b38aabb042b0c0f9f562b7741be3c1204838d7bbacfa78bb411c674bd5b984ee
@@ -25,6 +27,7 @@ TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -stati
 
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/serial.o \
 	build/arch/x86_64/pci.o build/arch/x86_64/mmio.o \
+	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/memory/page_allocator.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
@@ -61,6 +64,10 @@ $(LIMINE): $(LIMINE_DIR)/limine.c
 build/%.o: kernel/%.c
 	mkdir -p $(@D)
 	$(TARGET_CC) $(TARGET_CFLAGS) -c $< -o $@
+
+build/%.o: kernel/%.S
+	mkdir -p $(@D)
+	$(TARGET_CC) $(TARGET_ASFLAGS) -c $< -o $@
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_CC) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)

@@ -74,6 +74,8 @@ The prototype should capture:
 - the observable effect of revoking a grant;
 - time spent in grant, access mediation, and revoke operations once a stable timing source exists.
 
+The early kernel installs fatal exception handlers for vectors 0–31. They report the exception vector over COM1 and include CR2 for page faults, then halt. They do not recover from faults or enable external interrupts.
+
 The experiment should include a direct or minimally mediated baseline where that comparison is meaningful. It must report the precise operation being compared; unlike operations should not be combined into a single overhead number.
 
 ## Evaluation method
