@@ -67,7 +67,8 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/syscall.o build/arch/x86_64/syscall_entry.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
-	build/memory/page_allocator.o build/storage/block_device.o \
+	build/lib/memory.o build/memory/page_allocator.o \
+	build/storage/block_device.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/user/mmio_demo.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
@@ -97,7 +98,9 @@ $(LIMINE_ARCHIVE): | build
 	curl --fail --location --silent --show-error \
 		--output $@ \
 		https://github.com/Limine-Bootloader/Limine/releases/download/$(LIMINE_VERSION)/limine-binary.tar.gz
-	@if command -v sha256sum >/dev/null 2>&1; then \
+	@if printf '%s  %s\n' \
+		'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+		'/dev/null' | sha256sum --check --status >/dev/null 2>&1; then \
 		printf '%s  %s\n' '$(LIMINE_SHA256)' '$@' | sha256sum --check --status; \
 	elif command -v shasum >/dev/null 2>&1; then \
 		printf '%s  %s\n' '$(LIMINE_SHA256)' '$@' | shasum -a 256 -c -; \
