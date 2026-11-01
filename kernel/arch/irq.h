@@ -3,7 +3,11 @@
 
 #include <stdint.h>
 
+#if defined(__mips__)
+typedef uint32_t arch_irq_state_t;
+#else
 typedef uint64_t arch_irq_state_t;
+#endif
 
 /* Save and mask local interrupts; restore only the saved interrupt state. */
 arch_irq_state_t arch_irq_save(void);

@@ -21,6 +21,9 @@ SECTIONS
 
     . = ALIGN(CONSTANT(MAXPAGESIZE));
     .text : {
+        __user_mmio_demo_start = .;
+        KEEP(*(.user_text))
+        __user_mmio_demo_end = .;
         *(.text .text.*)
     } :text
 

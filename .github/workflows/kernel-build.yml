@@ -30,6 +30,9 @@ jobs:
           - architecture: riscv64
             target: riscv64-elf
             artifact: build/riscv64/eloquence.elf
+          - architecture: mips32
+            target: mips32-objects
+            artifact: build/mips32/arch/mips32/irq.o
 
     steps:
       - name: Check out source

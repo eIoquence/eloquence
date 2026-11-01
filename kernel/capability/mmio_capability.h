@@ -51,14 +51,15 @@ enum mmio_capability_result mmio_capability_grant(
     uint64_t owner_domain, struct mmio_mapping *mapping, uint32_t rights,
     struct mmio_capability_handle *handle);
 enum mmio_capability_result mmio_capability_read32(
-    uint64_t actor_domain, struct mmio_capability_handle handle,
-    uint64_t offset, uint32_t *value);
+    struct mmio_capability_handle handle, uint64_t offset, uint32_t *value);
 enum mmio_capability_result mmio_capability_write32(
-    uint64_t actor_domain, struct mmio_capability_handle handle,
-    uint64_t offset, uint32_t value);
+    struct mmio_capability_handle handle, uint64_t offset, uint32_t value);
 enum mmio_capability_result mmio_capability_revoke(
-    uint64_t actor_domain, struct mmio_capability_handle handle);
+    struct mmio_capability_handle handle);
+enum mmio_capability_result mmio_capability_revoke_kernel(
+    struct mmio_capability_handle handle);
 size_t mmio_capability_audit_read(struct mmio_capability_audit_event *events,
                                   size_t capacity);
+uint64_t mmio_capability_audit_overflow_count(void);
 
 #endif

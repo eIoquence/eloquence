@@ -12,6 +12,8 @@
 #include "memory/page_allocator.h"
 #include "paging.h"
 #include "serial.h"
+#include "user/mmio_demo.h"
+#include "user_mode.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -213,6 +215,8 @@ static void report_capability_audit(void) {
 
     serial_write("  MMIO audit events: ");
     serial_write_decimal(count);
+    serial_write(" overwritten=");
+    serial_write_decimal(mmio_capability_audit_overflow_count());
     serial_write("\n");
     for (size_t i = 0; i < count; i++) {
         serial_write("    #");
@@ -231,116 +235,18 @@ static void report_capability_audit(void) {
     }
 }
 
-static void exercise_edu_capability(const struct pci_bar_info *bar,
-                                    uint64_t size) {
-    const uint64_t owner_domain = 1;
-    const uint64_t foreign_domain = 2;
-    const uint32_t probe_value = 0x5a5aa5a5;
-    struct mmio_mapping mapping = {0};
-    struct mmio_capability_handle capability = {0};
-    enum mmio_capability_result result;
+static void exercise_edu_user_domain(const struct pci_bar_info *bar,
+                                     uint64_t size) {
+    uint64_t failures = UINT64_MAX;
+    bool ran = user_mmio_demo_execute(bar, size, &failures);
 
-    if (!x86_mmio_map_range(bar->base_address, size, &mapping)) {
-        serial_write("  EDU BAR0 MMIO map failed\n");
-        return;
+    serial_write("  EDU user-domain capability checks: ");
+    serial_write(ran && failures == 0 ? "pass" : "fail");
+    if (ran) {
+        serial_write(" failures=0x");
+        serial_write_hex(failures);
     }
-
-    result = mmio_capability_grant(owner_domain, &mapping,
-                                   MMIO_CAPABILITY_READ32
-                                   | MMIO_CAPABILITY_WRITE32,
-                                   &capability);
-    if (result != MMIO_CAPABILITY_OK) {
-        serial_write("  EDU capability grant failed: ");
-        serial_write(capability_result_name(result));
-        serial_write("\n");
-        x86_mmio_unmap(&mapping);
-        report_capability_audit();
-        return;
-    }
-
-    uint32_t device_id = 0;
-    uint32_t previous = 0;
-    uint32_t observed = 0;
-    uint32_t restored = 0;
-    bool id_read = mmio_capability_read32(owner_domain, capability, 0,
-                                          &device_id) == MMIO_CAPABILITY_OK;
-    bool previous_read = mmio_capability_read32(owner_domain, capability, 4,
-                                                &previous)
-        == MMIO_CAPABILITY_OK;
-    bool write_ok = false;
-    bool observed_read = false;
-    bool restore_ok = false;
-    bool restored_read = false;
-
-    if (previous_read) {
-        write_ok = mmio_capability_write32(owner_domain, capability, 4,
-                                           probe_value) == MMIO_CAPABILITY_OK;
-        observed_read = mmio_capability_read32(owner_domain, capability, 4,
-                                               &observed)
-            == MMIO_CAPABILITY_OK;
-        restore_ok = mmio_capability_write32(owner_domain, capability, 4,
-                                             ~previous)
-            == MMIO_CAPABILITY_OK;
-        restored_read = mmio_capability_read32(owner_domain, capability, 4,
-                                               &restored)
-            == MMIO_CAPABILITY_OK;
-    }
-
-    uint32_t foreign_value;
-    enum mmio_capability_result foreign_result =
-        mmio_capability_read32(foreign_domain, capability, 0, &foreign_value);
-    enum mmio_capability_result revoke_result =
-        mmio_capability_revoke(owner_domain, capability);
-    uint32_t stale_value;
-    enum mmio_capability_result stale_result =
-        mmio_capability_read32(owner_domain, capability, 0, &stale_value);
-
-    enum mmio_capability_result read_only_write_result =
-        MMIO_CAPABILITY_MAPPING_ERROR;
-    enum mmio_capability_result read_only_revoke_result =
-        MMIO_CAPABILITY_MAPPING_ERROR;
-    if (revoke_result == MMIO_CAPABILITY_OK) {
-        struct mmio_mapping read_only_mapping = {0};
-        struct mmio_capability_handle read_only_capability = {0};
-
-        if (x86_mmio_map_range(bar->base_address, size, &read_only_mapping)) {
-            result = mmio_capability_grant(owner_domain, &read_only_mapping,
-                                           MMIO_CAPABILITY_READ32,
-                                           &read_only_capability);
-            if (result == MMIO_CAPABILITY_OK) {
-                read_only_write_result = mmio_capability_write32(
-                    owner_domain, read_only_capability, 4, probe_value);
-                read_only_revoke_result = mmio_capability_revoke(
-                    owner_domain, read_only_capability);
-            } else {
-                x86_mmio_unmap(&read_only_mapping);
-                read_only_write_result = result;
-            }
-        }
-    }
-
-    serial_write("  EDU MMIO id=0x");
-    serial_write_hex32(device_id);
-    serial_write(" authorized-read=");
-    serial_write(id_read ? "pass" : "fail");
-    serial_write(" identity=");
-    serial_write(id_read && device_id == 0x010000edu ? "pass" : "fail");
-    serial_write(" liveness=");
-    serial_write(previous_read && write_ok && observed_read && restore_ok
-                     && restored_read && observed == ~probe_value
-                     && restored == previous ? "pass" : "fail");
-    serial_write(" foreign-access=");
-    serial_write(capability_result_name(foreign_result));
-    serial_write(" revoke=");
-    serial_write(capability_result_name(revoke_result));
-    serial_write(" stale-access=");
-    serial_write(capability_result_name(stale_result));
-    serial_write(" read-only-write=");
-    serial_write(capability_result_name(read_only_write_result));
-    serial_write(" read-only-revoke=");
-    serial_write(capability_result_name(read_only_revoke_result));
     serial_write("\n");
-
     report_capability_audit();
 }
 
@@ -408,7 +314,7 @@ static void report_pci_device(const struct pci_device_info *device,
                 if (size < 8 || !*mmio_available) {
                     continue;
                 }
-                exercise_edu_capability(bar, size);
+                exercise_edu_user_domain(bar, size);
             }
         }
     }
@@ -430,6 +336,9 @@ static void report_pci_devices(void) {
 
 void kmain(void) {
     serial_initialize();
+    if (!x86_user_mode_initialize()) {
+        panic("could not initialize x86-64 user mode and syscall support");
+    }
     x86_exceptions_initialize();
     serial_write("Eloquence x86-64 kernel\n");
 

@@ -1,12 +1,18 @@
 # ADR-0006: MMIO Capability Lifecycle
 
-- **Status:** Accepted
+- **Status:** Superseded by [ADR-0009](0009-user-mode-capability-boundary.md)
 - **Date:** 2026-11-01
 - **Decision owners:** Eloquence maintainers
 
 ## Context
 
-The EDU MMIO mapping can now be created and removed, but the research question needs an explicit authorization boundary around access. The current kernel has no user mode, process scheduler, or system-call boundary yet.
+This ADR records the earlier kernel-only capability stage. Its synthetic
+actor-ID calling convention was replaced by the kernel-owned domain identity
+and user-mode syscall boundary in ADR-0009.
+
+At the time this ADR was accepted, the EDU MMIO mapping could be created and
+removed, but the research question still needed an authorization boundary.
+There was no user mode, process scheduler, or system-call boundary yet.
 
 ## Decision
 

@@ -1,6 +1,7 @@
 # Multi-Architecture and FPGA Research Plan
 
-**Status:** Architecture plan; ports are not yet implemented
+**Status:** Partial architecture bring-up; no added architecture has a
+repeatable boot observation
 
 Eloquence will test whether one explicit resource-ownership model can survive
 across materially different privilege, memory, and device models. Portability
@@ -64,9 +65,9 @@ policy without changing allocator policy.
 Use QEMU `virt` with an explicit AArch64 CPU. Initial bring-up needs a console
 and must inspect the actual entry exception level. The first source slice
 requests the Limine framebuffer, memory map, and DTB, then paints boot
-diagnostics through a 32-bit RGB framebuffer. `make aarch64-objects` compiles
-this path and the AArch64 interrupt primitives; it does not link or boot a
-kernel image. This is not a PL011 driver: the next platform step is to discover
+diagnostics through a 32-bit RGB framebuffer. CI builds and links the AArch64
+ELF; neither CI nor the local object target boots it. This is not a PL011
+driver: the next platform step is to discover
 the UART through the DTB and map its physical range with Device attributes
 before accessing it. Limine does not promise that arbitrary reserved MMIO is
 available through the HHDM. Until then, a missing or unsupported framebuffer
@@ -94,9 +95,8 @@ recorded separately.
 
 The first source slice requests Limine base revision 6, Sv39, the BSP hart ID,
 memory map, and DTB, then reports the handoff through the SBI legacy console
-putchar call. `make riscv64-objects` is available, but the current local Clang
-has no RISC-V backend, so the source has not been compiler-validated. The
-legacy SBI console path is only an early QEMU/OpenSBI diagnostic; the next
+putchar call. CI builds and links the RV64 ELF; the current local Clang lacks a
+RISC-V backend. The legacy SBI console path is only an early QEMU/OpenSBI diagnostic; the next
 platform step is to discover the UART from the generated DTB and add the
 DTB-driven MMIO and interrupt-controller adapters. A linked ELF and repeatable
 boot observation remain outstanding.
@@ -112,7 +112,9 @@ or board.
 
 ## MIPS
 
-Start with the QEMU Malta machine and a pinned MIPS CPU model. It has a
+The repository currently contains only a MIPS32r2 interrupt-state primitive
+and a compile-only Make target; it is not a bootable MIPS kernel. Start with
+the QEMU Malta machine and a pinned MIPS CPU model. It has a
 different reset and firmware path from the current Limine-based x86 kernel.
 Choose and record endianness and ABI before sharing binary interfaces. Keep
 MIPS exception entry, TLB management, cache maintenance, and MMIO ordering in

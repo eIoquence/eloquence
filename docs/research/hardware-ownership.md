@@ -64,7 +64,7 @@ These items depend on a working baseline and evidence that the initial lifecycle
 
 The first end-to-end device experiment will use a QEMU-emulated PCI device with an MMIO region.
 
-The PCI scanner is read-only: it discovers functions and decodes BAR fields. A separate targeted transaction probes BAR0 size only on QEMU's educational PCI device, with I/O and memory decoding disabled and original configuration restored. The current kernel maps this range uncached and transfers the mapping to an MMIO capability record. The boot harness exercises authorized 32-bit reads/writes, rejects a foreign-domain access and a write through a read-only grant, revokes the mapping, checks the stale handle, and records audit events. Since trusted kernel code supplies both domain IDs, this demonstrates the capability API's checks but not isolation between protection domains. The Limine HHDM omits ordinary reserved memory in the requested base revision, so the mapper creates a separate virtual mapping and rejects ranges that overlap HHDM-mapped memory.
+The PCI scanner is read-only: it discovers functions and decodes BAR fields. A separate targeted transaction probes BAR0 size only on QEMU's educational PCI device, with I/O and memory decoding disabled and original configuration restored. The current source adds a ring-3 demonstration and scalar syscall path. Kernel-owned state records the current domain; syscalls accept neither a caller-supplied actor ID nor a user pointer. The demo attempts owner access, foreign-domain denial, read-only denial, revoke, stale-handle denial, and audit recording. The ELF has not been boot-validated since this change, so these remain intended runtime scenarios rather than observed results. Handles are still predictable slot/generation values and are not an unforgeability guarantee. The Limine HHDM omits ordinary reserved memory in the requested base revision, so the mapper creates a separate virtual mapping and rejects ranges that overlap HHDM-mapped memory.
 
 The prototype should capture:
 
@@ -74,7 +74,7 @@ The prototype should capture:
 - the observable effect of revoking a grant;
 - time spent in grant, access mediation, and revoke operations once a stable timing source exists.
 
-The early kernel installs fatal exception handlers for vectors 0–31. They report the exception vector over COM1 and include CR2 for page faults, then halt. They do not recover from faults or enable external interrupts.
+The early kernel installs handlers for exception vectors 0–31. They report the exception vector over COM1 and include CR2 for page faults. A fault reported from ring 3 returns to the kernel continuation and terminates that demo domain; kernel-mode exceptions halt. This path has not been boot-validated, and external interrupts remain disabled.
 
 The experiment should include a direct or minimally mediated baseline where that comparison is meaningful. It must report the precise operation being compared; unlike operations should not be combined into a single overhead number.
 
