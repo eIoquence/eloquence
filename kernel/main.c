@@ -8,10 +8,13 @@
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
+#include "drivers/ata/ata_pio.h"
+#include "drivers/pci/edu.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "paging.h"
 #include "serial.h"
+#include "storage/block_device.h"
 #include "user/mmio_demo.h"
 #include "user_mode.h"
 
@@ -180,6 +183,9 @@ static void report_page_allocator(void) {
     serial_write(" virtual=0x");
     serial_write_hex((uint64_t)(uintptr_t)frame.virtual_address);
     serial_write("\n");
+    if (!page_allocator_free(&frame)) {
+        panic("could not release the page allocator probe frame");
+    }
 }
 
 static const char *capability_operation_name(
@@ -250,6 +256,50 @@ static void exercise_edu_user_domain(const struct pci_bar_info *bar,
     report_capability_audit();
 }
 
+static void initialize_edu_driver(const struct pci_device_info *pci,
+                                  bool mmio_available) {
+    struct edu_device edu = {0};
+    uint32_t before = 0;
+    uint32_t after = 0;
+    bool liveness_ok;
+
+    if (!mmio_available) {
+        serial_write("  EDU driver skipped: MMIO mapper unavailable\n");
+        return;
+    }
+    if (!edu_device_initialize(pci, &edu)) {
+        serial_write("  EDU driver probe failed\n");
+        if (edu.initialized && !edu_device_shutdown(&edu)) {
+            serial_write("  EDU BAR mapping remains active after cleanup failure\n");
+        }
+        return;
+    }
+
+    serial_write("  EDU driver BAR0 size=0x");
+    serial_write_hex(edu.bar0_size);
+    serial_write(" identity validated\n");
+    liveness_ok = edu_device_liveness_roundtrip(
+        &edu, 0x5a5aa5a5U, &before, &after);
+    serial_write("  EDU liveness inversion and restore: ");
+    serial_write(liveness_ok ? "pass" : "fail");
+    serial_write(" before=0x");
+    serial_write_hex32(before);
+    serial_write(" observed=0x");
+    serial_write_hex32(after);
+    serial_write("\n");
+
+    struct pci_bar_info bar = edu.bar0;
+    uint64_t bar_size = edu.bar0_size;
+    bool shutdown_ok = edu_device_shutdown(&edu);
+    if (!shutdown_ok) {
+        serial_write("  EDU driver could not release BAR mapping\n");
+        return;
+    }
+    if (liveness_ok) {
+        exercise_edu_user_domain(&bar, bar_size);
+    }
+}
+
 static void report_pci_device(const struct pci_device_info *device,
                               void *context) {
     const bool *mmio_available = context;
@@ -297,26 +347,7 @@ static void report_pci_device(const struct pci_device_info *device,
     }
 
     if (device->vendor_id == 0x1234 && device->device_id == 0x11e8) {
-        for (uint8_t i = 0; i < device->bar_count; i++) {
-            const struct pci_bar_info *bar = &device->bars[i];
-            uint64_t size;
-
-            if (bar->index == 0 && bar->kind == PCI_BAR_MEMORY) {
-                if (!pci_probe_bar_size(device, bar, &size)) {
-                    serial_write("  EDU BAR0 size probe failed\n");
-                    continue;
-                }
-
-                serial_write("  EDU BAR0 size=0x");
-                serial_write_hex(size);
-                serial_write("\n");
-
-                if (size < 8 || !*mmio_available) {
-                    continue;
-                }
-                exercise_edu_user_domain(bar, size);
-            }
-        }
+        initialize_edu_driver(device, *mmio_available);
     }
 }
 
@@ -332,6 +363,32 @@ static void report_pci_devices(void) {
     serial_write("PCI functions discovered: ");
     serial_write_decimal(found);
     serial_write("\n");
+}
+
+static void report_block_devices(void) {
+    if (!ata_pio_initialize()) {
+        serial_write("Legacy ATA PIO probe unavailable\n");
+        return;
+    }
+
+    serial_write("Block devices discovered: ");
+    serial_write_decimal(block_device_count());
+    serial_write("\n");
+    for (uint64_t i = 0; i < block_device_count(); i++) {
+        const struct block_device *device = block_device_get(i);
+        if (device == 0) {
+            continue;
+        }
+        serial_write("  ");
+        serial_write(device->name);
+        serial_write(" model=");
+        serial_write(device->model);
+        serial_write(" sectors=");
+        serial_write_decimal(device->sector_count);
+        serial_write(" sector-size=");
+        serial_write_decimal(device->sector_size);
+        serial_write("\n");
+    }
 }
 
 void kmain(void) {
@@ -366,6 +423,7 @@ void kmain(void) {
         panic("could not initialize x86-64 paging support");
     }
     report_pci_devices();
+    report_block_devices();
     serial_write("Boot information report complete; kernel halted.\n");
     arch_cpu_halt();
 }

@@ -23,9 +23,12 @@ struct page_allocator_source {
 struct page_frame {
     uint64_t physical_address;
     void *virtual_address;
+    uint32_t allocation_index;
+    uint32_t allocation_generation;
 };
 
 bool page_allocator_initialize(const struct page_allocator_source *source);
 bool page_allocator_allocate(struct page_frame *frame);
+bool page_allocator_free(struct page_frame *frame);
 
 #endif

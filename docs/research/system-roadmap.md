@@ -59,7 +59,7 @@ that can be claimed from an interface stub.
 
 | Area | Current state | Evidence required for the next claim |
 | --- | --- | --- |
-| x86-64 bootstrap | Limine path, serial diagnostics, page allocator, exceptions, PCI discovery, MMIO mapping, capability checks | Repeatable QEMU boot record; no performance claims from emulation |
+| x86-64 bootstrap | Limine path, serial diagnostics, page allocator, exceptions, PCI discovery, QEMU EDU driver, MMIO mapping, capability checks | Repeatable QEMU boot record; no performance claims from emulation |
 | User protection | x86-64 ring-3 MMIO demo, scalar syscall path, kernel-owned domain identity, and user-fault termination in source | Linked ELF plus an observed user/kernel isolation run; adversarial syscall and fault cases |
 | AArch64 | Limine bootstrap sources and separate ELF target | Compile/link, explicit QEMU `virt` CPU/firmware, repeatable boot; then DTB-driven PL011 and GIC |
 | RV64 | Limine bootstrap sources request Sv39 and report handoff via SBI | Compile/link with a RISC-V-capable toolchain, QEMU `virt` boot, DTB-derived devices and interrupt controller |
@@ -67,7 +67,7 @@ that can be claimed from an interface stub.
 | FPGA | Research plan only; CVA6 is a candidate | Named board, RTL revision/configuration, firmware, RAM/peripherals, bitstream hash and reproducible boot |
 | DMA / IOMMU | Not implemented | Buffer ownership protocol and isolation tests on a named compatible platform |
 | Scheduler / IPC | Not implemented | Timer source, context-switch ABI, domain lifecycle, bounded message and capability transfer |
-| Storage / network | Not implemented | Device interfaces, VirtIO-QEMU functional baseline, failure handling and reproducible workload records |
+| Storage / network | Block-device API and legacy ATA PIO driver source; no filesystem or network stack | VirtIO-QEMU functional baseline, partitions/filesystem, network protocols, failure handling and reproducible workload records |
 | SDK / userland | Not implemented beyond the current ring-3 experiment | Stable syscall/API contract, libraries, linker/toolchain, shell and host-side development tools |
 
 Build success, boot success, functional support, and measured performance are
@@ -126,7 +126,7 @@ chain.
 | Scheduler | Single-CPU timer-driven preemption | Policy experiments, priorities and application-controlled scheduling |
 | Interrupts and timers | Platform controller initialization and acknowledged IRQs | IRQ capabilities, affinity, latency distributions and timer policy |
 | IPC | Bounded message passing with explicit endpoint authority | Shared memory, capability transfer, backpressure and measurements |
-| Device manager | Stable device identity and resource inventory | User-space drivers, hotplug, dependency and recovery policy |
+| Device manager | Bounded block-device registry and PCI inventory; no general driver binding or hotplug | Stable device identity, user-space drivers, dependency and recovery policy |
 | DMA / IOMMU | Explicit buffer state and map/unmap contract | Device domains, revocation guarantees, fault handling, platform evaluation |
 | Syscalls | No user pointers in the initial MMIO syscall ABI | Validated buffer APIs, ABI versioning and compatibility policy |
 | Resource manager | Discovery-to-release audit trail | Reservation, delegation, preemption and resource policy in user space |

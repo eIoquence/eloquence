@@ -42,21 +42,28 @@ static void clear_page(uint8_t *page) {
 }
 
 static bool create_user_mapping(struct x86_address_space *space,
-                                uint64_t *code_physical,
-                                uint64_t *stack_physical) {
-    struct page_frame code_frame;
-    struct page_frame stack_frame;
+                                struct page_frame *code_frame_out,
+                                struct page_frame *stack_frame_out) {
+    struct page_frame code_frame = {0};
+    struct page_frame stack_frame = {0};
     uint64_t code_size = (uint64_t)(__user_mmio_demo_end
                                     - __user_mmio_demo_start);
 
-    if (code_size == 0 || code_size > PAGE_SIZE
-        || !page_allocator_allocate(&code_frame)
-        || !page_allocator_allocate(&stack_frame)) {
+    if (space == 0 || code_frame_out == 0 || stack_frame_out == 0) {
         return false;
     }
+    *code_frame_out = (struct page_frame){0};
+    *stack_frame_out = (struct page_frame){0};
+    if (code_size == 0 || code_size > PAGE_SIZE
+        || !page_allocator_allocate(&code_frame)) {
+        return false;
+    }
+    *code_frame_out = code_frame;
+    if (!page_allocator_allocate(&stack_frame)) {
+        return false;
+    }
+    *stack_frame_out = stack_frame;
 
-    *code_physical = code_frame.physical_address;
-    *stack_physical = stack_frame.physical_address;
     if (!x86_address_space_create_user(space)) {
         return false;
     }
@@ -90,16 +97,35 @@ static void cleanup_mapping(struct mmio_mapping *mapping) {
     }
 }
 
+static void release_user_frame(struct x86_address_space *space,
+                               uint64_t virtual_address,
+                               struct page_frame *frame) {
+    if (frame->physical_address == 0) {
+        return;
+    }
+    if (space != 0 && space->root_virtual_address != 0
+        && x86_address_space_page_matches(space, virtual_address,
+                                          frame->physical_address)) {
+        (void)x86_address_space_unmap_page(space, virtual_address,
+                                          frame->physical_address);
+        if (x86_address_space_page_matches(space, virtual_address,
+                                           frame->physical_address)) {
+            return;
+        }
+    }
+    (void)page_allocator_free(frame);
+}
+
 bool user_mmio_demo_execute(const struct pci_bar_info *bar, uint64_t size,
                             uint64_t *failure_mask) {
     struct mmio_mapping mapping = {0};
     struct mmio_capability_handle handle = {0};
     struct x86_address_space owner_space = {0};
     struct x86_address_space foreign_space = {0};
-    uint64_t owner_code_physical = 0;
-    uint64_t owner_stack_physical = 0;
-    uint64_t foreign_code_physical = 0;
-    uint64_t foreign_stack_physical = 0;
+    struct page_frame owner_code_frame = {0};
+    struct page_frame owner_stack_frame = {0};
+    struct page_frame foreign_code_frame = {0};
+    struct page_frame foreign_stack_frame = {0};
     bool capability_granted = false;
     bool ran = false;
 
@@ -116,10 +142,10 @@ bool user_mmio_demo_execute(const struct pci_bar_info *bar, uint64_t size,
         goto cleanup;
     }
     capability_granted = true;
-    if (!create_user_mapping(&owner_space, &owner_code_physical,
-                             &owner_stack_physical)
-        || !create_user_mapping(&foreign_space, &foreign_code_physical,
-                                &foreign_stack_physical)) {
+    if (!create_user_mapping(&owner_space, &owner_code_frame,
+                             &owner_stack_frame)
+        || !create_user_mapping(&foreign_space, &foreign_code_frame,
+                                &foreign_stack_frame)) {
         goto cleanup;
     }
 
@@ -192,22 +218,14 @@ bool user_mmio_demo_execute(const struct pci_bar_info *bar, uint64_t size,
                           & ELOQUENCE_USER_TEST_REVOKE) != 0;
 
 cleanup:
-    if (owner_space.root_virtual_address != 0) {
-        (void)x86_address_space_unmap_page(&owner_space,
-                                           USER_MMIO_CODE_ADDRESS,
-                                           owner_code_physical);
-        (void)x86_address_space_unmap_page(&owner_space,
-                                           USER_MMIO_STACK_ADDRESS,
-                                           owner_stack_physical);
-    }
-    if (foreign_space.root_virtual_address != 0) {
-        (void)x86_address_space_unmap_page(&foreign_space,
-                                           USER_MMIO_CODE_ADDRESS,
-                                           foreign_code_physical);
-        (void)x86_address_space_unmap_page(&foreign_space,
-                                           USER_MMIO_STACK_ADDRESS,
-                                           foreign_stack_physical);
-    }
+    release_user_frame(&owner_space, USER_MMIO_CODE_ADDRESS,
+                       &owner_code_frame);
+    release_user_frame(&owner_space, USER_MMIO_STACK_ADDRESS,
+                       &owner_stack_frame);
+    release_user_frame(&foreign_space, USER_MMIO_CODE_ADDRESS,
+                       &foreign_code_frame);
+    release_user_frame(&foreign_space, USER_MMIO_STACK_ADDRESS,
+                       &foreign_stack_frame);
     cleanup_capability(handle, capability_granted);
     cleanup_mapping(&mapping);
     return ran;

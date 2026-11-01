@@ -67,7 +67,9 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/syscall.o build/arch/x86_64/syscall_entry.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
-	build/memory/page_allocator.o build/user/mmio_demo.o
+	build/memory/page_allocator.o build/storage/block_device.o \
+	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
+	build/user/mmio_demo.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
 	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
 RISCV64_OBJECTS := build/riscv64/arch/riscv64/main.o \
