@@ -2,6 +2,7 @@
 
 #include <limine.h>
 
+#include "memory/page_allocator.h"
 #include "serial.h"
 
 __attribute__((used, section(".limine_requests")))
@@ -16,6 +17,12 @@ static volatile struct limine_bootloader_info_request bootloader_request = {
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_memmap_request memory_map_request = {
     .id = LIMINE_MEMMAP_REQUEST_ID,
+    .revision = 0
+};
+
+__attribute__((used, section(".limine_requests")))
+static volatile struct limine_hhdm_request hhdm_request = {
+    .id = LIMINE_HHDM_REQUEST_ID,
     .revision = 0
 };
 
@@ -88,6 +95,29 @@ static void report_memory_map(void) {
     }
 }
 
+static void report_page_allocator(void) {
+    struct page_frame frame;
+
+    if (hhdm_request.response == 0) {
+        panic("Limine did not return the HHDM offset");
+    }
+    if (!page_allocator_initialize(memory_map_request.response,
+                                   hhdm_request.response->offset)) {
+        panic("could not initialize the physical page allocator");
+    }
+    if (!page_allocator_allocate(&frame)) {
+        panic("no usable physical page is available");
+    }
+
+    serial_write("HHDM offset: 0x");
+    serial_write_hex(hhdm_request.response->offset);
+    serial_write("\nFirst allocated page: physical=0x");
+    serial_write_hex(frame.physical_address);
+    serial_write(" virtual=0x");
+    serial_write_hex((uint64_t)(uintptr_t)frame.virtual_address);
+    serial_write("\n");
+}
+
 void kmain(void) {
     serial_initialize();
     serial_write("Eloquence x86-64 kernel\n");
@@ -107,6 +137,7 @@ void kmain(void) {
     }
 
     report_memory_map();
+    report_page_allocator();
     serial_write("Boot information report complete; kernel halted.\n");
     halt_cpu();
 }

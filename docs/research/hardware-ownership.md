@@ -43,11 +43,12 @@ Transitions, rights, and failure cases must be explicit. The capability represen
 
 1. x86-64 boot and diagnostic output in QEMU.
 2. Inspection of bootloader-provided memory and platform information.
-3. A documented capability and ownership model for device resources.
-4. PCI device discovery in the emulator configuration.
-5. A prototype for granting and revoking access to a bounded MMIO range.
-6. Functional checks for authorized access, denied access, and post-revocation behavior.
-7. Reproducible experiment records, including emulator and build configuration.
+3. A bootstrap allocator for 4 KiB pages from usable physical memory.
+4. A documented capability and ownership model for device resources.
+5. PCI device discovery in the emulator configuration.
+6. A prototype for granting and revoking access to a bounded MMIO range.
+7. Functional checks for authorized access, denied access, and post-revocation behavior.
+8. Reproducible experiment records, including emulator and build configuration.
 
 ### Deferred
 

@@ -14,16 +14,18 @@ The project does not claim novelty for capability systems or exokernels in gener
 
 ## Current status
 
-Kernel bring-up is in progress. The initial Limine entry, serial diagnostics, and memory map report are implemented; local QEMU execution is pending. See:
+Kernel bring-up is in progress. The initial Limine entry, serial diagnostics, memory map report, and monotonic page allocator are implemented; local QEMU execution is pending. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [ADR-0001: Research Scope and Initial Platform](docs/adr/0001-research-scope-and-platform.md)
+- [ADR-0002: Bootstrap Physical Page Allocation](docs/adr/0002-bootstrap-page-allocation.md)
 
 ## v0.1 target
 
 - Boot a minimal x86-64 kernel in QEMU through Limine.
 - Emit boot and diagnostic output over a serial console.
 - Inspect the bootloader-provided physical memory map.
+- Allocate a bootstrap 4 KiB physical page from usable memory.
 - Define resource identities, rights, ownership transitions, and revocation semantics.
 - Enumerate emulated PCI devices and prototype capability-checked MMIO access.
 - Record functional outcomes and repeatable measurements with the exact emulator configuration.
@@ -43,4 +45,4 @@ The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-
 
 The Limine protocol header is vendored from [limine-protocol](https://github.com/Limine-Bootloader/limine-protocol) at commit `6e85ddd6f928b5b512015c4d47d1cfce2fd28079`; its 0BSD notice is preserved in `include/limine.h`.
 
-The kernel requests bootloader information and the physical memory map, then reports them over COM1. It does not allocate memory, handle interrupts, or grant hardware capabilities yet.
+The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator can hand out 4 KiB pages from usable regions; it does not free pages, handle interrupts, or grant hardware capabilities yet.

@@ -23,7 +23,7 @@ TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -stati
 	-Wl,--build-id=none -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 \
 	-Wl,-z,noexecstack -Wl,-m,elf_x86_64 -Wl,-T,linker.ld
 
-KERNEL_OBJECTS := build/main.o build/arch/x86_64/serial.o
+KERNEL_OBJECTS := build/main.o build/arch/x86_64/serial.o build/memory/page_allocator.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
 
