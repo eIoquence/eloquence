@@ -5,7 +5,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#include "arch/x86_64/mmio.h"
+#include "memory/mmio.h"
 
 enum mmio_capability_rights {
     MMIO_CAPABILITY_READ32 = 1U << 0,
@@ -48,7 +48,7 @@ struct mmio_capability_audit_event {
 };
 
 enum mmio_capability_result mmio_capability_grant(
-    uint64_t owner_domain, struct x86_mmio_mapping *mapping, uint32_t rights,
+    uint64_t owner_domain, struct mmio_mapping *mapping, uint32_t rights,
     struct mmio_capability_handle *handle);
 enum mmio_capability_result mmio_capability_read32(
     uint64_t actor_domain, struct mmio_capability_handle handle,

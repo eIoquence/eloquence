@@ -20,13 +20,14 @@ TARGET_CFLAGS ?= --target=x86_64-unknown-none-elf -std=gnu11 -O2 -Wall -Wextra -
 	-fno-pic -fno-pie -fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections -MMD -MP -m64 -march=x86-64 -mno-mmx -mno-sse \
 	-mno-red-zone -mcmodel=kernel -nostdinc \
-	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel/arch/x86_64
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel -Ikernel/arch/x86_64
 TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -static \
 	-Wl,--build-id=none -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 \
 	-Wl,-z,noexecstack -Wl,-m,elf_x86_64 -Wl,-T,linker.ld
 
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/serial.o \
-	build/arch/x86_64/pci.o build/arch/x86_64/mmio.o \
+	build/arch/x86_64/pci.o build/arch/x86_64/paging.o \
+	build/arch/x86_64/mmio.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/memory/page_allocator.o
 

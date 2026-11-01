@@ -54,7 +54,7 @@ Transitions, rights, and failure cases must be explicit. The capability represen
 
 - DMA buffers, IOMMU domains, and device isolation claims involving DMA.
 - Physical PCIe hardware and performance conclusions about real devices.
-- ARM64 and RISC-V ports.
+- AArch64, RISC-V, and MIPS ports; these are now tracked in the [multi-architecture research plan](multi-architecture-and-fpga.md).
 - FPGA peripherals, custom processors, networking, filesystems, and a general-purpose userland.
 - A general capability framework for every kernel resource.
 

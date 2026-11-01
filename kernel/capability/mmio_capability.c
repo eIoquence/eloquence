@@ -2,6 +2,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "arch/mmio.h"
 #include "capability/mmio_capability.h"
 
 #define CAPABILITY_SLOT_COUNT 32
@@ -9,7 +10,7 @@
 #define VALID_RIGHTS (MMIO_CAPABILITY_READ32 | MMIO_CAPABILITY_WRITE32)
 
 struct mmio_capability_slot {
-    struct x86_mmio_mapping mapping;
+    struct mmio_mapping mapping;
     uint64_t owner_domain;
     uint32_t rights;
     uint32_t generation;
@@ -94,7 +95,7 @@ static enum mmio_capability_result validate_access(
 }
 
 enum mmio_capability_result mmio_capability_grant(
-    uint64_t owner_domain, struct x86_mmio_mapping *mapping, uint32_t rights,
+    uint64_t owner_domain, struct mmio_mapping *mapping, uint32_t rights,
     struct mmio_capability_handle *handle) {
     struct mmio_capability_handle invalid = {0};
     uint8_t slot_index;
@@ -131,7 +132,7 @@ enum mmio_capability_result mmio_capability_grant(
 
     handle->slot = slot_index;
     handle->generation = slot->generation;
-    *mapping = (struct x86_mmio_mapping){0};
+    *mapping = (struct mmio_mapping){0};
 
     audit_record(MMIO_CAPABILITY_OP_GRANT, MMIO_CAPABILITY_OK, 0,
                  owner_domain, *handle, 0);
@@ -162,9 +163,12 @@ enum mmio_capability_result mmio_capability_read32(
         return result;
     }
 
-    volatile uint32_t *register_address =
-        (volatile uint32_t *)((uintptr_t)slot->mapping.address + offset);
-    *value = *register_address;
+    if (!arch_mmio_read32(&slot->mapping, offset, value)) {
+        audit_record(MMIO_CAPABILITY_OP_READ32,
+                     MMIO_CAPABILITY_MAPPING_ERROR, actor_domain,
+                     slot->owner_domain, handle, offset);
+        return MMIO_CAPABILITY_MAPPING_ERROR;
+    }
     audit_record(MMIO_CAPABILITY_OP_READ32, MMIO_CAPABILITY_OK, actor_domain,
                  slot->owner_domain, handle, offset);
     return MMIO_CAPABILITY_OK;
@@ -187,9 +191,12 @@ enum mmio_capability_result mmio_capability_write32(
         return result;
     }
 
-    volatile uint32_t *register_address =
-        (volatile uint32_t *)((uintptr_t)slot->mapping.address + offset);
-    *register_address = value;
+    if (!arch_mmio_write32(&slot->mapping, offset, value)) {
+        audit_record(MMIO_CAPABILITY_OP_WRITE32,
+                     MMIO_CAPABILITY_MAPPING_ERROR, actor_domain,
+                     slot->owner_domain, handle, offset);
+        return MMIO_CAPABILITY_MAPPING_ERROR;
+    }
     audit_record(MMIO_CAPABILITY_OP_WRITE32, MMIO_CAPABILITY_OK, actor_domain,
                  slot->owner_domain, handle, offset);
     return MMIO_CAPABILITY_OK;
@@ -205,7 +212,7 @@ enum mmio_capability_result mmio_capability_revoke(
     if (result != MMIO_CAPABILITY_OK) {
         return result;
     }
-    if (!x86_mmio_unmap(&slot->mapping)) {
+    if (!arch_mmio_unmap(&slot->mapping)) {
         audit_record(MMIO_CAPABILITY_OP_REVOKE,
                      MMIO_CAPABILITY_MAPPING_ERROR, actor_domain,
                      slot->owner_domain, handle, 0);

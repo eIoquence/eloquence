@@ -7,7 +7,9 @@
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
+#include "memory/mmio.h"
 #include "memory/page_allocator.h"
+#include "paging.h"
 #include "serial.h"
 
 __attribute__((used, section(".limine_requests")))
@@ -188,7 +190,7 @@ static void exercise_edu_capability(const struct pci_bar_info *bar,
     const uint64_t owner_domain = 1;
     const uint64_t foreign_domain = 2;
     const uint32_t probe_value = 0x5a5aa5a5;
-    struct x86_mmio_mapping mapping = {0};
+    struct mmio_mapping mapping = {0};
     struct mmio_capability_handle capability = {0};
     enum mmio_capability_result result;
 
@@ -252,7 +254,7 @@ static void exercise_edu_capability(const struct pci_bar_info *bar,
     enum mmio_capability_result read_only_revoke_result =
         MMIO_CAPABILITY_MAPPING_ERROR;
     if (revoke_result == MMIO_CAPABILITY_OK) {
-        struct x86_mmio_mapping read_only_mapping = {0};
+        struct mmio_mapping read_only_mapping = {0};
         struct mmio_capability_handle read_only_capability = {0};
 
         if (x86_mmio_map_range(bar->base_address, size, &read_only_mapping)) {
@@ -405,6 +407,9 @@ void kmain(void) {
 
     report_memory_map();
     report_page_allocator();
+    if (!x86_paging_initialize(hhdm_request.response->offset)) {
+        panic("could not initialize x86-64 paging support");
+    }
     report_pci_devices();
     serial_write("Boot information report complete; kernel halted.\n");
     halt_cpu();

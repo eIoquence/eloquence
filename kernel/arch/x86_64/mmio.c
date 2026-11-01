@@ -3,25 +3,14 @@
 
 #include <limine.h>
 
-#include "memory/page_allocator.h"
+#include "arch/mmio.h"
 #include "mmio.h"
 #include "io.h"
+#include "paging.h"
 
 #define PAGE_SIZE 4096ULL
 #define PAGE_MASK (PAGE_SIZE - 1)
-#define PAGE_ENTRY_COUNT 512
 #define PAGE_ADDRESS_MASK 0x000ffffffffff000ULL
-#define PAGE_PRESENT (1ULL << 0)
-#define PAGE_WRITABLE (1ULL << 1)
-#define PAGE_USER (1ULL << 2)
-#define PAGE_WRITE_THROUGH (1ULL << 3)
-#define PAGE_CACHE_DISABLE (1ULL << 4)
-#define PAGE_LARGE (1ULL << 7)
-#define PAGE_NO_EXECUTE (1ULL << 63)
-
-#define EFER_MSR 0xc0000080U
-#define EFER_NO_EXECUTE_ENABLE (1ULL << 11)
-#define CR4_LA57 (1ULL << 12)
 
 #define MMIO_WINDOW_SIZE (64ULL * 1024 * 1024)
 #define MMIO_WINDOW_ALIGNMENT (1ULL << 39)
@@ -43,8 +32,7 @@ struct mmio_slot {
 static const struct limine_memmap_response *active_memory_map;
 static uint64_t active_hhdm_offset;
 static uint64_t mmio_window_base;
-static uint64_t *page_table_root;
-static uint64_t mmio_leaf_flags;
+static struct x86_address_space mmio_address_space;
 static uint64_t mmio_page_bitmap[MMIO_BITMAP_WORDS];
 static struct mmio_slot mmio_slots[MMIO_MAX_MAPPINGS];
 static bool mmio_initialized;
@@ -64,143 +52,22 @@ static bool align_up(uint64_t value, uint64_t alignment, uint64_t *aligned) {
     return add_u64(value, adjustment, aligned);
 }
 
-static uint64_t x86_read_cr3(void) {
-    uint64_t value;
-    __asm__ volatile ("mov %%cr3, %0" : "=r"(value));
-    return value;
-}
-
-static uint64_t x86_read_cr4(void) {
-    uint64_t value;
-    __asm__ volatile ("mov %%cr4, %0" : "=r"(value));
-    return value;
-}
-
-static uint64_t x86_read_msr(uint32_t msr) {
-    uint32_t low;
-    uint32_t high;
-    __asm__ volatile ("rdmsr" : "=a"(low), "=d"(high) : "c"(msr));
-    return ((uint64_t)high << 32) | low;
-}
-
-static bool x86_has_pat(void) {
-    uint32_t leaf = 1;
-    uint32_t ebx;
-    uint32_t ecx;
-    uint32_t edx;
-
-    __asm__ volatile ("cpuid"
-                      : "+a"(leaf), "=b"(ebx), "=c"(ecx), "=d"(edx));
-    return (edx & (1U << 16)) != 0;
-}
-
-static uint64_t *page_table_from_physical(uint64_t physical_address) {
-    uint64_t virtual_address;
-
-    if ((physical_address & PAGE_MASK) != 0
-        || !add_u64(active_hhdm_offset, physical_address, &virtual_address)) {
-        return 0;
-    }
-
-    return (uint64_t *)(uintptr_t)virtual_address;
-}
-
-static bool page_table_allocate(uint64_t **table_out) {
-    struct page_frame frame;
-    uint64_t *table;
-
-    if (!page_allocator_allocate(&frame)) {
-        return false;
-    }
-
-    table = frame.virtual_address;
-    for (uint64_t i = 0; i < PAGE_ENTRY_COUNT; i++) {
-        table[i] = 0;
-    }
-
-    *table_out = table;
-    return true;
-}
-
-static bool locate_page_entry(uint64_t virtual_address, bool create,
-                              uint64_t **entry_out) {
-    static const uint8_t shifts[] = {39, 30, 21};
-    uint64_t *table = page_table_root;
-
-    for (uint8_t level = 0; level < sizeof(shifts); level++) {
-        uint64_t index = (virtual_address >> shifts[level]) & 0x1ff;
-        uint64_t entry = table[index];
-
-        if ((entry & PAGE_PRESENT) == 0) {
-            uint64_t *new_table;
-            if (!create || !page_table_allocate(&new_table)) {
-                return false;
-            }
-
-            uint64_t physical_address =
-                (uint64_t)(uintptr_t)new_table - active_hhdm_offset;
-            if ((physical_address & PAGE_MASK) != 0
-                || (physical_address & ~PAGE_ADDRESS_MASK) != 0) {
-                return false;
-            }
-
-            table[index] = physical_address | PAGE_PRESENT | PAGE_WRITABLE;
-            entry = table[index];
-        } else {
-            if ((level != 0 && (entry & PAGE_LARGE) != 0)
-                || (entry & PAGE_WRITABLE) == 0
-                || (entry & PAGE_USER) != 0) {
-                return false;
-            }
-        }
-
-        table = page_table_from_physical(entry & PAGE_ADDRESS_MASK);
-        if (table == 0) {
-            return false;
-        }
-    }
-
-    *entry_out = &table[(virtual_address >> 12) & 0x1ff];
-    return true;
-}
-
 static bool map_page(uint64_t virtual_address, uint64_t physical_address) {
-    uint64_t *entry;
-
-    if (!locate_page_entry(virtual_address, true, &entry)
-        || (*entry & PAGE_PRESENT) != 0) {
-        return false;
-    }
-
-    *entry = (physical_address & PAGE_ADDRESS_MASK) | mmio_leaf_flags;
-    __asm__ volatile ("invlpg (%0)" : : "r"((void *)(uintptr_t)virtual_address)
-                      : "memory");
-    return true;
+    return x86_address_space_map_page(&mmio_address_space, virtual_address,
+                                      physical_address,
+                                      X86_PAGE_WRITABLE | X86_PAGE_UNCACHED);
 }
 
 static bool page_matches(uint64_t virtual_address,
                          uint64_t physical_address) {
-    uint64_t *entry;
-
-    return locate_page_entry(virtual_address, false, &entry)
-        && (*entry & PAGE_PRESENT) != 0
-        && (*entry & PAGE_ADDRESS_MASK) == physical_address;
+    return x86_address_space_page_matches(&mmio_address_space, virtual_address,
+                                          physical_address);
 }
 
 static bool unmap_page(uint64_t virtual_address,
                        uint64_t physical_address) {
-    uint64_t *entry;
-
-    if (!locate_page_entry(virtual_address, false, &entry)
-        || (*entry & PAGE_PRESENT) == 0
-        || (*entry & PAGE_ADDRESS_MASK) != physical_address) {
-        return false;
-    }
-
-    *entry = 0;
-    __asm__ volatile ("invlpg (%0)" : : "r"((void *)(uintptr_t)virtual_address)
-                      : "memory");
-    return true;
+    return x86_address_space_unmap_page(&mmio_address_space, virtual_address,
+                                        physical_address);
 }
 
 static bool type_is_hhdm_mapped(uint64_t type) {
@@ -355,29 +222,16 @@ bool x86_mmio_initialize(const struct limine_memmap_response *memory_map,
                          uint64_t hhdm_offset) {
     if (mmio_initialized || memory_map == 0
         || (memory_map->entry_count != 0 && memory_map->entries == 0)
-        || (x86_read_cr4() & CR4_LA57) != 0
-        || (x86_read_msr(EFER_MSR) & EFER_NO_EXECUTE_ENABLE) == 0) {
+        || x86_paging_hhdm_offset() != hhdm_offset
+        || !x86_address_space_current(&mmio_address_space)) {
         return false;
     }
 
     active_memory_map = memory_map;
     active_hhdm_offset = hhdm_offset;
-    page_table_root = page_table_from_physical(x86_read_cr3()
-                                               & PAGE_ADDRESS_MASK);
-    if (page_table_root == 0) {
-        active_memory_map = 0;
-        return false;
-    }
     if (!find_mmio_window_base(&mmio_window_base)) {
         active_memory_map = 0;
-        page_table_root = 0;
         return false;
-    }
-
-    mmio_leaf_flags = PAGE_PRESENT | PAGE_WRITABLE | PAGE_CACHE_DISABLE
-        | PAGE_NO_EXECUTE;
-    if (x86_has_pat()) {
-        mmio_leaf_flags |= PAGE_WRITE_THROUGH;
     }
 
     mmio_initialized = true;
@@ -385,7 +239,7 @@ bool x86_mmio_initialize(const struct limine_memmap_response *memory_map,
 }
 
 bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
-                        struct x86_mmio_mapping *mapping) {
+                        struct mmio_mapping *mapping) {
     uint64_t physical_page;
     uint64_t physical_end;
     uint64_t span;
@@ -471,28 +325,32 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
                      + (physical_address - physical_page));
     mapping->physical_address = physical_address;
     mapping->length = length;
-    mapping->generation = slot->generation;
-    mapping->slot = free_slot;
+    mapping->backend_cookie = ((uint64_t)slot->generation << 8) | free_slot;
 
     x86_irq_restore(irq_flags);
     return true;
 }
 
-bool x86_mmio_unmap(struct x86_mmio_mapping *mapping) {
+bool x86_mmio_unmap(struct mmio_mapping *mapping) {
     uint8_t slot_index;
+    uint32_t generation;
     struct mmio_slot *slot;
     uint64_t virtual_base;
     uint64_t irq_flags;
 
-    if (!mmio_initialized || mapping == 0
-        || mapping->slot >= MMIO_MAX_MAPPINGS) {
+    if (!mmio_initialized || mapping == 0 || mapping->address == 0) {
+        return false;
+    }
+
+    slot_index = (uint8_t)mapping->backend_cookie;
+    generation = (uint32_t)(mapping->backend_cookie >> 8);
+    if (slot_index >= MMIO_MAX_MAPPINGS || generation == 0) {
         return false;
     }
 
     irq_flags = x86_irq_save();
-    slot_index = mapping->slot;
     slot = &mmio_slots[slot_index];
-    if (!slot->active || slot->generation != mapping->generation
+    if (!slot->active || slot->generation != generation
         || slot->length != mapping->length
         || mapping->physical_address != slot->requested_physical_address) {
         x86_irq_restore(irq_flags);
@@ -530,8 +388,44 @@ bool x86_mmio_unmap(struct x86_mmio_mapping *mapping) {
     if (slot->generation == 0) {
         slot->generation = 1;
     }
-    *mapping = (struct x86_mmio_mapping){0};
+    *mapping = (struct mmio_mapping){0};
 
     x86_irq_restore(irq_flags);
     return true;
+}
+
+bool arch_mmio_read32(const struct mmio_mapping *mapping, uint64_t offset,
+                      uint32_t *value) {
+    if (mapping == 0 || mapping->address == 0 || value == 0
+        || (offset & 3) != 0 || offset > mapping->length
+        || mapping->length - offset < sizeof(*value)) {
+        return false;
+    }
+
+    volatile uint32_t *register_address = (volatile uint32_t *)
+        ((uintptr_t)mapping->address + offset);
+    __asm__ volatile ("" : : : "memory");
+    *value = *register_address;
+    __asm__ volatile ("" : : : "memory");
+    return true;
+}
+
+bool arch_mmio_write32(const struct mmio_mapping *mapping, uint64_t offset,
+                       uint32_t value) {
+    if (mapping == 0 || mapping->address == 0 || (offset & 3) != 0
+        || offset > mapping->length
+        || mapping->length - offset < sizeof(value)) {
+        return false;
+    }
+
+    volatile uint32_t *register_address = (volatile uint32_t *)
+        ((uintptr_t)mapping->address + offset);
+    __asm__ volatile ("" : : : "memory");
+    *register_address = value;
+    __asm__ volatile ("" : : : "memory");
+    return true;
+}
+
+bool arch_mmio_unmap(struct mmio_mapping *mapping) {
+    return x86_mmio_unmap(mapping);
 }

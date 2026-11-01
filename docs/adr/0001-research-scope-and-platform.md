@@ -15,14 +15,14 @@ The repository is an empty starting point. The project direction is hardware-fir
 3. Use Limine as the initial boot protocol so the project can focus on kernel behavior rather than a custom bootloader.
 4. Start with a minimal kernel bring-up slice: boot information, serial diagnostics, and inspection of the physical memory map.
 5. Make PCI discovery and bounded MMIO grant/revoke the first device-facing experiment, after the required memory and protection mechanisms exist.
-6. Keep DMA/IOMMU, physical-hardware performance evaluation, and ARM64/RISC-V ports outside v0.1.
+6. Keep DMA/IOMMU, physical-hardware performance evaluation, and additional architecture ports outside v0.1. The later multi-architecture research program is defined in [ADR-0008](0008-multi-architecture-and-fpga-research.md).
 
 ## Consequences
 
 - The initial result is a controlled functional prototype, not a complete operating system.
 - QEMU results can validate protocol behavior and repeatable functional cases; they cannot establish physical-hardware performance.
 - The capability representation, exact isolation mechanism, and revocation guarantees remain open until a dedicated design record is written.
-- Portability will be evaluated after the first platform has stable interfaces and experiments.
+- Additional ports will be evaluated after the first platform has stable interfaces and experiments; see ADR-0008 for the accepted sequence.
 
 ## Revisit when
 
