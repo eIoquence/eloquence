@@ -25,7 +25,7 @@ TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -stati
 
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/serial.o \
 	build/arch/x86_64/pci.o build/arch/x86_64/mmio.o \
-	build/memory/page_allocator.o
+	build/capability/mmio_capability.o build/memory/page_allocator.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
 
