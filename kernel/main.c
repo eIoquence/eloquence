@@ -8,10 +8,15 @@
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
+#include "drivers/ata/ata_pio.h"
+#include "drivers/pci/edu.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "paging.h"
 #include "serial.h"
+#include "storage/block_device.h"
+#include "user/mmio_demo.h"
+#include "user_mode.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -178,6 +183,9 @@ static void report_page_allocator(void) {
     serial_write(" virtual=0x");
     serial_write_hex((uint64_t)(uintptr_t)frame.virtual_address);
     serial_write("\n");
+    if (!page_allocator_free(&frame)) {
+        panic("could not release the page allocator probe frame");
+    }
 }
 
 static const char *capability_operation_name(
@@ -213,6 +221,8 @@ static void report_capability_audit(void) {
 
     serial_write("  MMIO audit events: ");
     serial_write_decimal(count);
+    serial_write(" overwritten=");
+    serial_write_decimal(mmio_capability_audit_overflow_count());
     serial_write("\n");
     for (size_t i = 0; i < count; i++) {
         serial_write("    #");
@@ -231,117 +241,63 @@ static void report_capability_audit(void) {
     }
 }
 
-static void exercise_edu_capability(const struct pci_bar_info *bar,
-                                    uint64_t size) {
-    const uint64_t owner_domain = 1;
-    const uint64_t foreign_domain = 2;
-    const uint32_t probe_value = 0x5a5aa5a5;
-    struct mmio_mapping mapping = {0};
-    struct mmio_capability_handle capability = {0};
-    enum mmio_capability_result result;
+static void exercise_edu_user_domain(const struct pci_bar_info *bar,
+                                     uint64_t size) {
+    uint64_t failures = UINT64_MAX;
+    bool ran = user_mmio_demo_execute(bar, size, &failures);
 
-    if (!x86_mmio_map_range(bar->base_address, size, &mapping)) {
-        serial_write("  EDU BAR0 MMIO map failed\n");
+    serial_write("  EDU user-domain capability checks: ");
+    serial_write(ran && failures == 0 ? "pass" : "fail");
+    if (ran) {
+        serial_write(" failures=0x");
+        serial_write_hex(failures);
+    }
+    serial_write("\n");
+    report_capability_audit();
+}
+
+static void initialize_edu_driver(const struct pci_device_info *pci,
+                                  bool mmio_available) {
+    struct edu_device edu = {0};
+    uint32_t before = 0;
+    uint32_t after = 0;
+    bool liveness_ok;
+
+    if (!mmio_available) {
+        serial_write("  EDU driver skipped: MMIO mapper unavailable\n");
         return;
     }
-
-    result = mmio_capability_grant(owner_domain, &mapping,
-                                   MMIO_CAPABILITY_READ32
-                                   | MMIO_CAPABILITY_WRITE32,
-                                   &capability);
-    if (result != MMIO_CAPABILITY_OK) {
-        serial_write("  EDU capability grant failed: ");
-        serial_write(capability_result_name(result));
-        serial_write("\n");
-        x86_mmio_unmap(&mapping);
-        report_capability_audit();
-        return;
-    }
-
-    uint32_t device_id = 0;
-    uint32_t previous = 0;
-    uint32_t observed = 0;
-    uint32_t restored = 0;
-    bool id_read = mmio_capability_read32(owner_domain, capability, 0,
-                                          &device_id) == MMIO_CAPABILITY_OK;
-    bool previous_read = mmio_capability_read32(owner_domain, capability, 4,
-                                                &previous)
-        == MMIO_CAPABILITY_OK;
-    bool write_ok = false;
-    bool observed_read = false;
-    bool restore_ok = false;
-    bool restored_read = false;
-
-    if (previous_read) {
-        write_ok = mmio_capability_write32(owner_domain, capability, 4,
-                                           probe_value) == MMIO_CAPABILITY_OK;
-        observed_read = mmio_capability_read32(owner_domain, capability, 4,
-                                               &observed)
-            == MMIO_CAPABILITY_OK;
-        restore_ok = mmio_capability_write32(owner_domain, capability, 4,
-                                             ~previous)
-            == MMIO_CAPABILITY_OK;
-        restored_read = mmio_capability_read32(owner_domain, capability, 4,
-                                               &restored)
-            == MMIO_CAPABILITY_OK;
-    }
-
-    uint32_t foreign_value;
-    enum mmio_capability_result foreign_result =
-        mmio_capability_read32(foreign_domain, capability, 0, &foreign_value);
-    enum mmio_capability_result revoke_result =
-        mmio_capability_revoke(owner_domain, capability);
-    uint32_t stale_value;
-    enum mmio_capability_result stale_result =
-        mmio_capability_read32(owner_domain, capability, 0, &stale_value);
-
-    enum mmio_capability_result read_only_write_result =
-        MMIO_CAPABILITY_MAPPING_ERROR;
-    enum mmio_capability_result read_only_revoke_result =
-        MMIO_CAPABILITY_MAPPING_ERROR;
-    if (revoke_result == MMIO_CAPABILITY_OK) {
-        struct mmio_mapping read_only_mapping = {0};
-        struct mmio_capability_handle read_only_capability = {0};
-
-        if (x86_mmio_map_range(bar->base_address, size, &read_only_mapping)) {
-            result = mmio_capability_grant(owner_domain, &read_only_mapping,
-                                           MMIO_CAPABILITY_READ32,
-                                           &read_only_capability);
-            if (result == MMIO_CAPABILITY_OK) {
-                read_only_write_result = mmio_capability_write32(
-                    owner_domain, read_only_capability, 4, probe_value);
-                read_only_revoke_result = mmio_capability_revoke(
-                    owner_domain, read_only_capability);
-            } else {
-                x86_mmio_unmap(&read_only_mapping);
-                read_only_write_result = result;
-            }
+    if (!edu_device_initialize(pci, &edu)) {
+        serial_write("  EDU driver probe failed\n");
+        if (edu.initialized && !edu_device_shutdown(&edu)) {
+            serial_write("  EDU BAR mapping remains active after cleanup failure\n");
         }
+        return;
     }
 
-    serial_write("  EDU MMIO id=0x");
-    serial_write_hex32(device_id);
-    serial_write(" authorized-read=");
-    serial_write(id_read ? "pass" : "fail");
-    serial_write(" identity=");
-    serial_write(id_read && device_id == 0x010000edu ? "pass" : "fail");
-    serial_write(" liveness=");
-    serial_write(previous_read && write_ok && observed_read && restore_ok
-                     && restored_read && observed == ~probe_value
-                     && restored == previous ? "pass" : "fail");
-    serial_write(" foreign-access=");
-    serial_write(capability_result_name(foreign_result));
-    serial_write(" revoke=");
-    serial_write(capability_result_name(revoke_result));
-    serial_write(" stale-access=");
-    serial_write(capability_result_name(stale_result));
-    serial_write(" read-only-write=");
-    serial_write(capability_result_name(read_only_write_result));
-    serial_write(" read-only-revoke=");
-    serial_write(capability_result_name(read_only_revoke_result));
+    serial_write("  EDU driver BAR0 size=0x");
+    serial_write_hex(edu.bar0_size);
+    serial_write(" identity validated\n");
+    liveness_ok = edu_device_liveness_roundtrip(
+        &edu, 0x5a5aa5a5U, &before, &after);
+    serial_write("  EDU liveness inversion and restore: ");
+    serial_write(liveness_ok ? "pass" : "fail");
+    serial_write(" before=0x");
+    serial_write_hex32(before);
+    serial_write(" observed=0x");
+    serial_write_hex32(after);
     serial_write("\n");
 
-    report_capability_audit();
+    struct pci_bar_info bar = edu.bar0;
+    uint64_t bar_size = edu.bar0_size;
+    bool shutdown_ok = edu_device_shutdown(&edu);
+    if (!shutdown_ok) {
+        serial_write("  EDU driver could not release BAR mapping\n");
+        return;
+    }
+    if (liveness_ok) {
+        exercise_edu_user_domain(&bar, bar_size);
+    }
 }
 
 static void report_pci_device(const struct pci_device_info *device,
@@ -391,26 +347,7 @@ static void report_pci_device(const struct pci_device_info *device,
     }
 
     if (device->vendor_id == 0x1234 && device->device_id == 0x11e8) {
-        for (uint8_t i = 0; i < device->bar_count; i++) {
-            const struct pci_bar_info *bar = &device->bars[i];
-            uint64_t size;
-
-            if (bar->index == 0 && bar->kind == PCI_BAR_MEMORY) {
-                if (!pci_probe_bar_size(device, bar, &size)) {
-                    serial_write("  EDU BAR0 size probe failed\n");
-                    continue;
-                }
-
-                serial_write("  EDU BAR0 size=0x");
-                serial_write_hex(size);
-                serial_write("\n");
-
-                if (size < 8 || !*mmio_available) {
-                    continue;
-                }
-                exercise_edu_capability(bar, size);
-            }
-        }
+        initialize_edu_driver(device, *mmio_available);
     }
 }
 
@@ -428,8 +365,37 @@ static void report_pci_devices(void) {
     serial_write("\n");
 }
 
+static void report_block_devices(void) {
+    if (!ata_pio_initialize()) {
+        serial_write("Legacy ATA PIO probe unavailable\n");
+        return;
+    }
+
+    serial_write("Block devices discovered: ");
+    serial_write_decimal(block_device_count());
+    serial_write("\n");
+    for (uint64_t i = 0; i < block_device_count(); i++) {
+        const struct block_device *device = block_device_get(i);
+        if (device == 0) {
+            continue;
+        }
+        serial_write("  ");
+        serial_write(device->name);
+        serial_write(" model=");
+        serial_write(device->model);
+        serial_write(" sectors=");
+        serial_write_decimal(device->sector_count);
+        serial_write(" sector-size=");
+        serial_write_decimal(device->sector_size);
+        serial_write("\n");
+    }
+}
+
 void kmain(void) {
     serial_initialize();
+    if (!x86_user_mode_initialize()) {
+        panic("could not initialize x86-64 user mode and syscall support");
+    }
     x86_exceptions_initialize();
     serial_write("Eloquence x86-64 kernel\n");
 
@@ -457,6 +423,7 @@ void kmain(void) {
         panic("could not initialize x86-64 paging support");
     }
     report_pci_devices();
+    report_block_devices();
     serial_write("Boot information report complete; kernel halted.\n");
     arch_cpu_halt();
 }

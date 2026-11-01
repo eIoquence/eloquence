@@ -4,6 +4,7 @@
 
 #include "arch/mmio.h"
 #include "capability/mmio_capability.h"
+#include "domain/domain.h"
 
 #define CAPABILITY_SLOT_COUNT 32
 #define AUDIT_EVENT_COUNT 64
@@ -20,6 +21,7 @@ struct mmio_capability_slot {
 static struct mmio_capability_slot capability_slots[CAPABILITY_SLOT_COUNT];
 static struct mmio_capability_audit_event audit_events[AUDIT_EVENT_COUNT];
 static uint64_t audit_sequence;
+static uint64_t audit_overflow_count;
 static size_t audit_count;
 
 static void audit_record(enum mmio_capability_operation operation,
@@ -29,6 +31,10 @@ static void audit_record(enum mmio_capability_operation operation,
                          uint64_t offset) {
     struct mmio_capability_audit_event *event =
         &audit_events[audit_sequence % AUDIT_EVENT_COUNT];
+
+    if (audit_count == AUDIT_EVENT_COUNT) {
+        audit_overflow_count++;
+    }
 
     event->sequence = audit_sequence++;
     event->actor_domain = actor_domain;
@@ -97,14 +103,16 @@ static enum mmio_capability_result validate_access(
 enum mmio_capability_result mmio_capability_grant(
     uint64_t owner_domain, struct mmio_mapping *mapping, uint32_t rights,
     struct mmio_capability_handle *handle) {
+    uint64_t actor_domain = kernel_domain_current_id();
     struct mmio_capability_handle invalid = {0};
     uint8_t slot_index;
 
-    if (owner_domain == 0 || mapping == 0 || handle == 0
+    if (actor_domain != KERNEL_DOMAIN_ID
+        || owner_domain == KERNEL_DOMAIN_ID || mapping == 0 || handle == 0
         || mapping->address == 0 || mapping->length < sizeof(uint32_t)
         || rights == 0 || (rights & ~VALID_RIGHTS) != 0) {
         audit_record(MMIO_CAPABILITY_OP_GRANT,
-                     MMIO_CAPABILITY_INVALID_ARGUMENT, 0,
+                     MMIO_CAPABILITY_INVALID_ARGUMENT, actor_domain,
                      owner_domain, invalid, 0);
         return MMIO_CAPABILITY_INVALID_ARGUMENT;
     }
@@ -116,7 +124,7 @@ enum mmio_capability_result mmio_capability_grant(
     }
     if (slot_index == CAPABILITY_SLOT_COUNT) {
         audit_record(MMIO_CAPABILITY_OP_GRANT,
-                     MMIO_CAPABILITY_TABLE_FULL, 0,
+                     MMIO_CAPABILITY_TABLE_FULL, actor_domain,
                      owner_domain, invalid, 0);
         return MMIO_CAPABILITY_TABLE_FULL;
     }
@@ -134,14 +142,14 @@ enum mmio_capability_result mmio_capability_grant(
     handle->generation = slot->generation;
     *mapping = (struct mmio_mapping){0};
 
-    audit_record(MMIO_CAPABILITY_OP_GRANT, MMIO_CAPABILITY_OK, 0,
+    audit_record(MMIO_CAPABILITY_OP_GRANT, MMIO_CAPABILITY_OK, actor_domain,
                  owner_domain, *handle, 0);
     return MMIO_CAPABILITY_OK;
 }
 
 enum mmio_capability_result mmio_capability_read32(
-    uint64_t actor_domain, struct mmio_capability_handle handle,
-    uint64_t offset, uint32_t *value) {
+    struct mmio_capability_handle handle, uint64_t offset, uint32_t *value) {
+    uint64_t actor_domain = kernel_domain_current_id();
     struct mmio_capability_slot *slot;
     enum mmio_capability_result result;
 
@@ -175,8 +183,8 @@ enum mmio_capability_result mmio_capability_read32(
 }
 
 enum mmio_capability_result mmio_capability_write32(
-    uint64_t actor_domain, struct mmio_capability_handle handle,
-    uint64_t offset, uint32_t value) {
+    struct mmio_capability_handle handle, uint64_t offset, uint32_t value) {
+    uint64_t actor_domain = kernel_domain_current_id();
     struct mmio_capability_slot *slot;
     enum mmio_capability_result result =
         lookup_capability(actor_domain, handle, MMIO_CAPABILITY_OP_WRITE32,
@@ -202,8 +210,34 @@ enum mmio_capability_result mmio_capability_write32(
     return MMIO_CAPABILITY_OK;
 }
 
+static enum mmio_capability_result revoke_slot(
+    uint64_t actor_domain, struct mmio_capability_handle handle,
+    struct mmio_capability_slot *slot) {
+    uint64_t owner_domain = slot->owner_domain;
+
+    if (!arch_mmio_unmap(&slot->mapping)) {
+        audit_record(MMIO_CAPABILITY_OP_REVOKE,
+                     MMIO_CAPABILITY_MAPPING_ERROR, actor_domain,
+                     owner_domain, handle, 0);
+        return MMIO_CAPABILITY_MAPPING_ERROR;
+    }
+
+    slot->active = false;
+    slot->owner_domain = KERNEL_DOMAIN_ID;
+    slot->rights = 0;
+    slot->generation++;
+    if (slot->generation == 0) {
+        slot->generation = 1;
+    }
+
+    audit_record(MMIO_CAPABILITY_OP_REVOKE, MMIO_CAPABILITY_OK, actor_domain,
+                 owner_domain, handle, 0);
+    return MMIO_CAPABILITY_OK;
+}
+
 enum mmio_capability_result mmio_capability_revoke(
-    uint64_t actor_domain, struct mmio_capability_handle handle) {
+    struct mmio_capability_handle handle) {
+    uint64_t actor_domain = kernel_domain_current_id();
     struct mmio_capability_slot *slot;
     enum mmio_capability_result result =
         lookup_capability(actor_domain, handle, MMIO_CAPABILITY_OP_REVOKE, 0,
@@ -212,24 +246,35 @@ enum mmio_capability_result mmio_capability_revoke(
     if (result != MMIO_CAPABILITY_OK) {
         return result;
     }
-    if (!arch_mmio_unmap(&slot->mapping)) {
+    return revoke_slot(actor_domain, handle, slot);
+}
+
+enum mmio_capability_result mmio_capability_revoke_kernel(
+    struct mmio_capability_handle handle) {
+    uint64_t actor_domain = kernel_domain_current_id();
+
+    if (actor_domain != KERNEL_DOMAIN_ID) {
         audit_record(MMIO_CAPABILITY_OP_REVOKE,
-                     MMIO_CAPABILITY_MAPPING_ERROR, actor_domain,
+                     MMIO_CAPABILITY_ACCESS_DENIED, actor_domain,
+                     KERNEL_DOMAIN_ID, handle, 0);
+        return MMIO_CAPABILITY_ACCESS_DENIED;
+    }
+    if (handle.slot >= CAPABILITY_SLOT_COUNT) {
+        audit_record(MMIO_CAPABILITY_OP_REVOKE,
+                     MMIO_CAPABILITY_INVALID_HANDLE, actor_domain,
+                     KERNEL_DOMAIN_ID, handle, 0);
+        return MMIO_CAPABILITY_INVALID_HANDLE;
+    }
+
+    struct mmio_capability_slot *slot = &capability_slots[handle.slot];
+    if (!slot->active || slot->generation != handle.generation) {
+        audit_record(MMIO_CAPABILITY_OP_REVOKE,
+                     MMIO_CAPABILITY_STALE_HANDLE, actor_domain,
                      slot->owner_domain, handle, 0);
-        return MMIO_CAPABILITY_MAPPING_ERROR;
+        return MMIO_CAPABILITY_STALE_HANDLE;
     }
 
-    slot->active = false;
-    slot->owner_domain = 0;
-    slot->rights = 0;
-    slot->generation++;
-    if (slot->generation == 0) {
-        slot->generation = 1;
-    }
-
-    audit_record(MMIO_CAPABILITY_OP_REVOKE, MMIO_CAPABILITY_OK, actor_domain,
-                 actor_domain, handle, 0);
-    return MMIO_CAPABILITY_OK;
+    return revoke_slot(actor_domain, handle, slot);
 }
 
 size_t mmio_capability_audit_read(struct mmio_capability_audit_event *events,
@@ -250,4 +295,8 @@ size_t mmio_capability_audit_read(struct mmio_capability_audit_event *events,
     }
 
     return count;
+}
+
+uint64_t mmio_capability_audit_overflow_count(void) {
+    return audit_overflow_count;
 }

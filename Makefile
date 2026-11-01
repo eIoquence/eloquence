@@ -25,20 +25,71 @@ TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -stati
 	-Wl,--build-id=none -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 \
 	-Wl,-z,noexecstack -Wl,-m,elf_x86_64 -Wl,-T,linker.ld
 
+AARCH64_CFLAGS ?= --target=aarch64-unknown-none-elf -std=gnu11 -O2 \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+	-fno-stack-check -fno-pic -fno-pie -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections \
+	-MMD -MP -march=armv8-a -mgeneral-regs-only -mcmodel=large -nostdinc \
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel \
+	-Ikernel/arch/aarch64
+AARCH64_ASFLAGS ?= --target=aarch64-unknown-none-elf -ffreestanding \
+	-fno-pic -fno-pie -march=armv8-a -mgeneral-regs-only -mcmodel=large
+AARCH64_LDFLAGS ?= --target=aarch64-unknown-none-elf -fuse-ld=lld \
+	-nostdlib -static -Wl,--build-id=none -Wl,--gc-sections \
+	-Wl,-z,max-page-size=0x1000 -Wl,-z,noexecstack \
+	-Wl,-T,linker-aarch64.ld
+
+RISCV64_CFLAGS ?= --target=riscv64-unknown-none-elf -std=gnu11 -O2 \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+	-fno-stack-check -fno-pic -fno-pie -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections \
+	-MMD -MP -march=rv64imac_zicsr -mabi=lp64 -mcmodel=medany -mno-relax \
+	-nostdinc -isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel \
+	-Ikernel/arch/riscv64
+RISCV64_ASFLAGS ?= --target=riscv64-unknown-none-elf -ffreestanding \
+	-fno-pic -fno-pie -march=rv64imac_zicsr -mabi=lp64 \
+	-mcmodel=medany -mno-relax
+RISCV64_LDFLAGS ?= --target=riscv64-unknown-none-elf -fuse-ld=lld \
+	-nostdlib -static -Wl,--build-id=none -Wl,--gc-sections \
+	-Wl,--no-relax -Wl,-z,max-page-size=0x1000 \
+	-Wl,-T,linker-riscv64.ld
+
+MIPS32_CFLAGS ?= --target=mipsel-unknown-elf -std=gnu11 -O2 \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin \
+	-fno-stack-protector -fno-pic -fno-pie -mno-abicalls \
+	-march=mips32r2 -mabi=32 -nostdinc \
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel
+
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/serial.o \
 	build/arch/x86_64/pci.o build/arch/x86_64/paging.o \
-	build/arch/x86_64/mmio.o \
+	build/arch/x86_64/mmio.o build/arch/x86_64/user_mode.o \
+	build/arch/x86_64/syscall.o build/arch/x86_64/syscall_entry.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
-	build/capability/mmio_capability.o build/memory/page_allocator.o
+	build/capability/mmio_capability.o build/domain/domain.o \
+	build/lib/memory.o build/memory/page_allocator.o \
+	build/storage/block_device.o \
+	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
+	build/user/mmio_demo.o
+AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
+	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
+RISCV64_OBJECTS := build/riscv64/arch/riscv64/main.o \
+	build/riscv64/arch/riscv64/console.o build/riscv64/arch/riscv64/irq.o
+MIPS32_OBJECTS := build/mips32/arch/mips32/irq.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
+-include $(AARCH64_OBJECTS:.o=.d)
+-include $(RISCV64_OBJECTS:.o=.d)
+-include $(MIPS32_OBJECTS:.o=.d)
 
-.PHONY: all iso run clean
+.PHONY: all iso run x86_64-objects aarch64-objects aarch64-elf riscv64-objects \
+	riscv64-elf mips32-objects clean
 
 all: iso
 
 iso: build/eloquence.iso
+
+x86_64-objects: $(KERNEL_OBJECTS)
 
 build:
 	mkdir -p $@
@@ -47,7 +98,9 @@ $(LIMINE_ARCHIVE): | build
 	curl --fail --location --silent --show-error \
 		--output $@ \
 		https://github.com/Limine-Bootloader/Limine/releases/download/$(LIMINE_VERSION)/limine-binary.tar.gz
-	@if command -v sha256sum >/dev/null 2>&1; then \
+	@if printf '%s  %s\n' \
+		'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855' \
+		'/dev/null' | sha256sum --check --status >/dev/null 2>&1; then \
 		printf '%s  %s\n' '$(LIMINE_SHA256)' '$@' | sha256sum --check --status; \
 	elif command -v shasum >/dev/null 2>&1; then \
 		printf '%s  %s\n' '$(LIMINE_SHA256)' '$@' | shasum -a 256 -c -; \
@@ -70,6 +123,42 @@ build/%.o: kernel/%.c
 build/%.o: kernel/%.S
 	mkdir -p $(@D)
 	$(TARGET_CC) $(TARGET_ASFLAGS) -c $< -o $@
+
+build/aarch64/%.o: kernel/%.c
+	mkdir -p $(@D)
+	$(TARGET_CC) $(AARCH64_CFLAGS) -c $< -o $@
+
+build/aarch64/%.o: kernel/%.S
+	mkdir -p $(@D)
+	$(TARGET_CC) $(AARCH64_ASFLAGS) -c $< -o $@
+
+aarch64-objects: $(AARCH64_OBJECTS)
+
+build/aarch64/eloquence.elf: $(AARCH64_OBJECTS) linker-aarch64.ld
+	$(TARGET_CC) $(AARCH64_LDFLAGS) -o $@ $(AARCH64_OBJECTS)
+
+aarch64-elf: build/aarch64/eloquence.elf
+
+build/riscv64/%.o: kernel/%.c
+	mkdir -p $(@D)
+	$(TARGET_CC) $(RISCV64_CFLAGS) -c $< -o $@
+
+build/riscv64/%.o: kernel/%.S
+	mkdir -p $(@D)
+	$(TARGET_CC) $(RISCV64_ASFLAGS) -c $< -o $@
+
+riscv64-objects: $(RISCV64_OBJECTS)
+
+build/riscv64/eloquence.elf: $(RISCV64_OBJECTS) linker-riscv64.ld
+	$(TARGET_CC) $(RISCV64_LDFLAGS) -o $@ $(RISCV64_OBJECTS)
+
+riscv64-elf: build/riscv64/eloquence.elf
+
+build/mips32/%.o: kernel/%.c
+	mkdir -p $(@D)
+	$(TARGET_CC) $(MIPS32_CFLAGS) -c $< -o $@
+
+mips32-objects: $(MIPS32_OBJECTS)
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_CC) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)

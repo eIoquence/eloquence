@@ -1,7 +1,9 @@
 #include <stdint.h>
 
+#include "domain/domain.h"
 #include "exceptions.h"
 #include "serial.h"
+#include "user_mode.h"
 
 struct idt_gate {
     uint16_t offset_low;
@@ -128,8 +130,14 @@ void x86_exceptions_initialize(void) {
     __asm__ volatile ("lidt %0" : : "m"(idtr) : "memory");
 }
 
-__attribute__((noreturn))
-void x86_exception_dispatch(uint64_t vector) {
+uint64_t x86_exception_dispatch(const struct x86_exception_frame *frame) {
+    if (frame == 0) {
+        for (;;) {
+            __asm__ volatile ("cli; hlt");
+        }
+    }
+
+    uint64_t vector = frame->vector;
     serial_write("CPU exception: ");
     serial_write(exception_name(vector));
     serial_write(" vector=0x");
@@ -142,6 +150,12 @@ void x86_exception_dispatch(uint64_t vector) {
         serial_write("Page fault address: 0x");
         serial_write_hex(fault_address);
         serial_write("\n");
+    }
+
+    if ((frame->code_segment & 3) == 3
+        && kernel_domain_current_id() != KERNEL_DOMAIN_ID) {
+        serial_write("Terminating user domain after exception\n");
+        return x86_user_mode_fault_exit(vector);
     }
 
     for (;;) {

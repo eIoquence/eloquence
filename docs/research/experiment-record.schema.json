@@ -1,0 +1,129 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "urn:eloquence:schemas:experiment-record:1",
+  "title": "Eloquence Hardware Experiment Record",
+  "description": "Reproducibility metadata and observations for one Eloquence experiment run.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": [
+    "schema_version",
+    "run_id",
+    "recorded_at_utc",
+    "source_revision",
+    "environment",
+    "build",
+    "scenario",
+    "result",
+    "limitations"
+  ],
+  "properties": {
+    "schema_version": { "const": 1 },
+    "run_id": { "type": "string", "minLength": 1 },
+    "recorded_at_utc": { "type": "string", "format": "date-time" },
+    "source_revision": {
+      "type": "string",
+      "pattern": "^[0-9a-f]{40}([0-9a-f]{24})?$"
+    },
+    "environment": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["kind", "architecture", "machine", "cpu", "memory_bytes"],
+      "properties": {
+        "kind": { "enum": ["emulator", "physical", "fpga_simulation", "fpga_board"] },
+        "architecture": { "enum": ["x86_64", "aarch64", "riscv64", "mips32", "custom"] },
+        "machine": { "type": "string", "minLength": 1 },
+        "cpu": { "type": "string", "minLength": 1 },
+        "firmware": { "type": "string" },
+        "boot_chain": { "type": "string" },
+        "memory_bytes": { "type": "integer", "minimum": 1 },
+        "device_configuration": { "type": "string" },
+        "board_revision": { "type": "string" },
+        "bitstream_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "build": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["compiler", "compiler_version", "flags", "artifact_sha256"],
+      "properties": {
+        "compiler": { "type": "string", "minLength": 1 },
+        "compiler_version": { "type": "string", "minLength": 1 },
+        "linker": { "type": "string" },
+        "flags": { "type": "array", "items": { "type": "string" } },
+        "artifact_sha256": {
+          "type": "string",
+          "pattern": "^[0-9a-f]{64}$"
+        }
+      }
+    },
+    "scenario": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "procedure", "expected"],
+      "properties": {
+        "name": { "type": "string", "minLength": 1 },
+        "procedure": { "type": "string", "minLength": 1 },
+        "expected": { "type": "string", "minLength": 1 },
+        "observed": { "type": "string" },
+        "repetitions": { "type": "integer", "minimum": 1 }
+      }
+    },
+    "result": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["status"],
+      "properties": {
+        "status": { "enum": ["passed", "failed", "blocked", "not_run"] },
+        "performance_scope": { "enum": ["none", "emulator_only", "physical_hardware"] },
+        "measurements": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["operation", "unit", "raw_samples"],
+            "properties": {
+              "operation": { "type": "string", "minLength": 1 },
+              "unit": { "type": "string", "minLength": 1 },
+              "raw_samples": {
+                "type": "array",
+                "minItems": 1,
+                "items": { "type": "number" }
+              },
+              "summary": { "type": "string" }
+            }
+          }
+        },
+        "evidence": { "type": "array", "items": { "type": "string" } }
+      }
+    },
+    "limitations": {
+      "type": "array",
+      "items": { "type": "string" }
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "environment": {
+            "properties": { "kind": { "const": "emulator" } },
+            "required": ["kind"]
+          }
+        },
+        "required": ["environment"]
+      },
+      "then": {
+        "properties": {
+          "result": {
+            "properties": {
+              "performance_scope": { "enum": ["none", "emulator_only"] }
+            }
+          }
+        }
+      }
+    }
+  ]
+}

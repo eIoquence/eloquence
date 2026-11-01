@@ -33,4 +33,19 @@ static inline uint32_t x86_inl(uint16_t port) {
     return value;
 }
 
+static inline void x86_insw(uint16_t port, void *buffer, uint32_t words) {
+    __asm__ volatile ("cld; rep insw"
+                      : "+D"(buffer), "+c"(words)
+                      : "d"(port)
+                      : "memory", "cc");
+}
+
+static inline void x86_outsw(uint16_t port, const void *buffer,
+                             uint32_t words) {
+    __asm__ volatile ("cld; rep outsw"
+                      : "+S"(buffer), "+c"(words)
+                      : "d"(port)
+                      : "memory", "cc");
+}
+
 #endif

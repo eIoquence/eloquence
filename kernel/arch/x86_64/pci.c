@@ -3,6 +3,7 @@
 
 #include "arch/irq.h"
 #include "io.h"
+#include "lib/string.h"
 #include "pci.h"
 
 #define PCI_CONFIG_ADDRESS 0x0cf8

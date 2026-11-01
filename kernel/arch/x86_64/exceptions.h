@@ -3,7 +3,18 @@
 
 #include <stdint.h>
 
+struct x86_exception_frame {
+    uint64_t vector;
+    uint64_t error_code;
+    uint64_t instruction_pointer;
+    uint64_t code_segment;
+    uint64_t flags;
+    uint64_t stack_pointer;
+    uint64_t stack_segment;
+};
+
 void x86_exceptions_initialize(void);
-__attribute__((noreturn)) void x86_exception_dispatch(uint64_t vector);
+uint64_t x86_exception_dispatch(
+    const struct x86_exception_frame *frame);
 
 #endif
