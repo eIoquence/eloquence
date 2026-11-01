@@ -64,6 +64,8 @@ These items depend on a working baseline and evidence that the initial lifecycle
 
 The first end-to-end device experiment will use a QEMU-emulated PCI device with an MMIO region.
 
+The first PCI scanner is read-only: it discovers functions and decodes assigned BAR fields but does not probe BAR sizes or map device memory. A BAR base alone does not define a grantable range; sizing and safe MMIO mappings are separate implementation steps.
+
 The prototype should capture:
 
 - resource identity and bounds discovered from the emulated platform;

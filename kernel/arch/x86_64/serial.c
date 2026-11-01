@@ -1,35 +1,26 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "io.h"
 #include "serial.h"
 
 #define COM1_BASE 0x3f8
 
-static void port_write(uint16_t port, uint8_t value) {
-    __asm__ volatile ("outb %0, %1" : : "a"(value), "Nd"(port));
-}
-
-static uint8_t port_read(uint16_t port) {
-    uint8_t value;
-    __asm__ volatile ("inb %1, %0" : "=a"(value) : "Nd"(port));
-    return value;
-}
-
 static void serial_write_byte(char value) {
-    while ((port_read(COM1_BASE + 5) & 0x20) == 0) {
+    while ((x86_inb(COM1_BASE + 5) & 0x20) == 0) {
     }
 
-    port_write(COM1_BASE, (uint8_t)value);
+    x86_outb(COM1_BASE, (uint8_t)value);
 }
 
 void serial_initialize(void) {
-    port_write(COM1_BASE + 1, 0x00);
-    port_write(COM1_BASE + 3, 0x80);
-    port_write(COM1_BASE, 0x01);
-    port_write(COM1_BASE + 1, 0x00);
-    port_write(COM1_BASE + 3, 0x03);
-    port_write(COM1_BASE + 2, 0xc7);
-    port_write(COM1_BASE + 4, 0x0b);
+    x86_outb(COM1_BASE + 1, 0x00);
+    x86_outb(COM1_BASE + 3, 0x80);
+    x86_outb(COM1_BASE, 0x01);
+    x86_outb(COM1_BASE + 1, 0x00);
+    x86_outb(COM1_BASE + 3, 0x03);
+    x86_outb(COM1_BASE + 2, 0xc7);
+    x86_outb(COM1_BASE + 4, 0x0b);
 }
 
 void serial_write(const char *text) {
@@ -45,6 +36,14 @@ void serial_write_hex(uint64_t value) {
     static const char digits[] = "0123456789abcdef";
 
     for (int shift = 60; shift >= 0; shift -= 4) {
+        serial_write_byte(digits[(value >> shift) & 0xf]);
+    }
+}
+
+void serial_write_hex32(uint32_t value) {
+    static const char digits[] = "0123456789abcdef";
+
+    for (int shift = 28; shift >= 0; shift -= 4) {
         serial_write_byte(digits[(value >> shift) & 0xf]);
     }
 }

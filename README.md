@@ -14,7 +14,7 @@ The project does not claim novelty for capability systems or exokernels in gener
 
 ## Current status
 
-Kernel bring-up is in progress. The initial Limine entry, serial diagnostics, memory map report, and monotonic page allocator are implemented; local QEMU execution is pending. See:
+Kernel bring-up is in progress. The source now includes Limine boot information, serial diagnostics, a monotonic page allocator, and read-only PCI discovery; local QEMU execution is pending. Controlled MMIO remains future work. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [ADR-0001: Research Scope and Initial Platform](docs/adr/0001-research-scope-and-platform.md)
@@ -45,4 +45,4 @@ The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-
 
 The Limine protocol header is vendored from [limine-protocol](https://github.com/Limine-Bootloader/limine-protocol) at commit `6e85ddd6f928b5b512015c4d47d1cfce2fd28079`; its 0BSD notice is preserved in `include/limine.h`.
 
-The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator can hand out 4 KiB pages from usable regions; it does not free pages, handle interrupts, or grant hardware capabilities yet.
+The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator can hand out 4 KiB pages from usable regions. PCI discovery reads conventional configuration space and reports function IDs and BAR base fields; it does not size BARs, map MMIO, free pages, handle interrupts, or grant hardware capabilities yet.

@@ -2,6 +2,7 @@
 
 #include <limine.h>
 
+#include "pci.h"
 #include "memory/page_allocator.h"
 #include "serial.h"
 
@@ -118,6 +119,61 @@ static void report_page_allocator(void) {
     serial_write("\n");
 }
 
+static void report_pci_device(const struct pci_device_info *device,
+                              void *context) {
+    (void)context;
+
+    serial_write("PCI ");
+    serial_write_decimal(device->bus);
+    serial_write(":");
+    serial_write_decimal(device->device);
+    serial_write(".");
+    serial_write_decimal(device->function);
+    serial_write(" vendor=0x");
+    serial_write_hex32(device->vendor_id);
+    serial_write(" device=0x");
+    serial_write_hex32(device->device_id);
+    serial_write(" class=0x");
+    serial_write_hex32(((uint32_t)device->class_code << 16)
+                       | ((uint32_t)device->subclass << 8)
+                       | device->programming_interface);
+    serial_write(" header=0x");
+    serial_write_hex32(device->header_type);
+    serial_write("\n");
+
+    for (uint8_t i = 0; i < device->bar_count; i++) {
+        const struct pci_bar_info *bar = &device->bars[i];
+
+        serial_write("  BAR");
+        serial_write_decimal(bar->index);
+        serial_write(" ");
+
+        if (!bar->valid || bar->kind == PCI_BAR_RESERVED) {
+            serial_write("reserved/invalid\n");
+            continue;
+        }
+        if (bar->kind == PCI_BAR_IO) {
+            serial_write("io base=0x");
+        } else {
+            serial_write(bar->is_64_bit ? "memory64 base=0x" : "memory32 base=0x");
+        }
+
+        serial_write_hex(bar->base_address);
+        if (bar->kind == PCI_BAR_MEMORY && bar->prefetchable) {
+            serial_write(" prefetchable");
+        }
+        serial_write("\n");
+    }
+}
+
+static void report_pci_devices(void) {
+    uint64_t found = pci_enumerate(report_pci_device, 0);
+
+    serial_write("PCI functions discovered: ");
+    serial_write_decimal(found);
+    serial_write("\n");
+}
+
 void kmain(void) {
     serial_initialize();
     serial_write("Eloquence x86-64 kernel\n");
@@ -138,6 +194,7 @@ void kmain(void) {
 
     report_memory_map();
     report_page_allocator();
+    report_pci_devices();
     serial_write("Boot information report complete; kernel halted.\n");
     halt_cpu();
 }
