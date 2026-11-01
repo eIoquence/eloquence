@@ -9,6 +9,7 @@
 #define PCI_CONFIG_ENABLE 0x80000000U
 
 #define PCI_VENDOR_DEVICE 0x00
+#define PCI_COMMAND 0x04
 #define PCI_CLASS_REVISION 0x08
 #define PCI_HEADER_TYPE 0x0c
 #define PCI_BAR0 0x10
@@ -21,8 +22,56 @@ static uint32_t pci_read_config(uint8_t bus, uint8_t device,
         | ((uint32_t)function << 8)
         | (offset & 0xfc);
 
+    uint64_t flags = x86_irq_save();
     x86_outl(PCI_CONFIG_ADDRESS, address);
-    return x86_inl(PCI_CONFIG_DATA);
+    uint32_t value = x86_inl(PCI_CONFIG_DATA);
+    x86_irq_restore(flags);
+    return value;
+}
+
+static void pci_write_config(uint8_t bus, uint8_t device,
+                             uint8_t function, uint8_t offset,
+                             uint32_t value) {
+    uint32_t address = PCI_CONFIG_ENABLE
+        | ((uint32_t)bus << 16)
+        | ((uint32_t)device << 11)
+        | ((uint32_t)function << 8)
+        | (offset & 0xfc);
+
+    uint64_t flags = x86_irq_save();
+    x86_outl(PCI_CONFIG_ADDRESS, address);
+    x86_outl(PCI_CONFIG_DATA, value);
+    x86_irq_restore(flags);
+}
+
+static uint16_t pci_read_config_word(uint8_t bus, uint8_t device,
+                                    uint8_t function, uint8_t offset) {
+    uint32_t address = PCI_CONFIG_ENABLE
+        | ((uint32_t)bus << 16)
+        | ((uint32_t)device << 11)
+        | ((uint32_t)function << 8)
+        | (offset & 0xfc);
+
+    uint64_t flags = x86_irq_save();
+    x86_outl(PCI_CONFIG_ADDRESS, address);
+    uint16_t value = x86_inw(PCI_CONFIG_DATA + (offset & 2));
+    x86_irq_restore(flags);
+    return value;
+}
+
+static void pci_write_config_word(uint8_t bus, uint8_t device,
+                                  uint8_t function, uint8_t offset,
+                                  uint16_t value) {
+    uint32_t address = PCI_CONFIG_ENABLE
+        | ((uint32_t)bus << 16)
+        | ((uint32_t)device << 11)
+        | ((uint32_t)function << 8)
+        | (offset & 0xfc);
+
+    uint64_t flags = x86_irq_save();
+    x86_outl(PCI_CONFIG_ADDRESS, address);
+    x86_outw(PCI_CONFIG_DATA + (offset & 2), value);
+    x86_irq_restore(flags);
 }
 
 static uint8_t pci_bar_slot_count(uint8_t header_type) {
@@ -149,4 +198,115 @@ uint64_t pci_enumerate(pci_device_callback callback, void *context) {
     }
 
     return found;
+}
+
+static bool pci_power_of_two(uint64_t value) {
+    return value != 0 && (value & (value - 1)) == 0;
+}
+
+bool pci_probe_bar_size(const struct pci_device_info *device,
+                        const struct pci_bar_info *bar, uint64_t *size) {
+    if (device == 0 || bar == 0 || size == 0 || !bar->valid
+        || bar->kind == PCI_BAR_RESERVED) {
+        return false;
+    }
+
+    uint8_t slot_count = pci_bar_slot_count(device->header_type);
+    if (bar->index >= slot_count
+        || (bar->is_64_bit && bar->index + 1 >= slot_count)) {
+        return false;
+    }
+
+    uint64_t flags = x86_irq_save();
+    uint32_t vendor_device = pci_read_config(device->bus, device->device,
+                                            device->function,
+                                            PCI_VENDOR_DEVICE);
+    if (!pci_device_present(vendor_device)
+        || (uint16_t)vendor_device != device->vendor_id
+        || (uint16_t)(vendor_device >> 16) != device->device_id) {
+        x86_irq_restore(flags);
+        return false;
+    }
+
+    uint8_t bar_offset = PCI_BAR0 + bar->index * 4;
+    uint32_t original_low = pci_read_config(device->bus, device->device,
+                                            device->function, bar_offset);
+    uint8_t memory_type = (original_low >> 1) & 0x3;
+    bool io_bar = (original_low & 1) != 0;
+    bool current_64_bit = !io_bar && memory_type == 2;
+    if (io_bar != (bar->kind == PCI_BAR_IO)
+        || current_64_bit != bar->is_64_bit
+        || (!io_bar && memory_type == 3)) {
+        x86_irq_restore(flags);
+        return false;
+    }
+
+    uint32_t original_high = 0;
+    if (current_64_bit) {
+        original_high = pci_read_config(device->bus, device->device,
+                                        device->function, bar_offset + 4);
+    }
+
+    uint16_t original_command = pci_read_config_word(device->bus,
+                                                     device->device,
+                                                     device->function,
+                                                     PCI_COMMAND);
+    pci_write_config_word(device->bus, device->device, device->function,
+                          PCI_COMMAND,
+                          original_command & (uint16_t)~0x3U);
+
+    pci_write_config(device->bus, device->device, device->function,
+                     bar_offset, UINT32_MAX);
+    if (current_64_bit) {
+        pci_write_config(device->bus, device->device, device->function,
+                         bar_offset + 4, UINT32_MAX);
+    }
+
+    uint32_t mask_low = pci_read_config(device->bus, device->device,
+                                       device->function, bar_offset);
+    uint32_t mask_high = current_64_bit
+        ? pci_read_config(device->bus, device->device, device->function,
+                          bar_offset + 4)
+        : 0;
+
+    if (current_64_bit) {
+        pci_write_config(device->bus, device->device, device->function,
+                         bar_offset + 4, original_high);
+    }
+    pci_write_config(device->bus, device->device, device->function,
+                     bar_offset, original_low);
+    pci_write_config_word(device->bus, device->device, device->function,
+                          PCI_COMMAND, original_command);
+
+    uint64_t probed_size = 0;
+    if (io_bar) {
+        uint32_t address_mask = mask_low & ~0x3U;
+        if (address_mask != 0) {
+            probed_size = (uint32_t)(~address_mask + 1U);
+        }
+    } else if (current_64_bit) {
+        uint64_t address_mask = ((uint64_t)mask_high << 32)
+            | (mask_low & ~0xfU);
+        if (address_mask != 0) {
+            probed_size = ~address_mask + 1;
+        }
+    } else if (memory_type == 1) {
+        uint32_t address_mask = mask_low & 0x000ffff0U;
+        if (address_mask != 0) {
+            probed_size = ((~address_mask) & 0x000fffffU) + 1U;
+        }
+    } else {
+        uint32_t address_mask = mask_low & ~0xfU;
+        if (address_mask != 0) {
+            probed_size = (uint32_t)(~address_mask + 1U);
+        }
+    }
+
+    x86_irq_restore(flags);
+    if (!pci_power_of_two(probed_size)) {
+        return false;
+    }
+
+    *size = probed_size;
+    return true;
 }

@@ -164,6 +164,20 @@ static void report_pci_device(const struct pci_device_info *device,
         }
         serial_write("\n");
     }
+
+    if (device->vendor_id == 0x1234 && device->device_id == 0x11e8) {
+        for (uint8_t i = 0; i < device->bar_count; i++) {
+            const struct pci_bar_info *bar = &device->bars[i];
+            uint64_t size;
+
+            if (bar->index == 0 && bar->kind == PCI_BAR_MEMORY
+                && pci_probe_bar_size(device, bar, &size)) {
+                serial_write("  EDU BAR0 size=0x");
+                serial_write_hex(size);
+                serial_write("\n");
+            }
+        }
+    }
 }
 
 static void report_pci_devices(void) {

@@ -81,7 +81,7 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 
 run: build/eloquence.iso
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \
-		-serial stdio -monitor none -no-reboot -no-shutdown
+		-device edu -serial stdio -monitor none -no-reboot -no-shutdown
 
 clean:
 	rm -rf build
