@@ -47,6 +47,12 @@ performing volatile register accesses itself. Each future backend must specify
 its device-memory attributes and ordering semantics before claiming this
 interface is complete.
 
+The CPU utility contract in `kernel/arch/irq.h` covers saving/restoring local
+interrupt state and halting the CPU. Its x86-64, AArch64, RV64, and MIPS32r2
+implementations are present, while the active image still selects only the
+x86-64 implementation. This is an instruction-level foundation, not evidence
+that those targets boot or that interrupt controllers are configured.
+
 The physical page allocator remains tied to the current Limine memory-map
 structure. Before the first non-x86 boot path is added, bootloader responses
 must be normalized into kernel-owned boot information, or the allocator must

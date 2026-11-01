@@ -1,6 +1,7 @@
 #include <stdbool.h>
 #include <stdint.h>
 
+#include "arch/irq.h"
 #include "io.h"
 #include "pci.h"
 
@@ -22,10 +23,10 @@ static uint32_t pci_read_config(uint8_t bus, uint8_t device,
         | ((uint32_t)function << 8)
         | (offset & 0xfc);
 
-    uint64_t flags = x86_irq_save();
+    arch_irq_state_t flags = arch_irq_save();
     x86_outl(PCI_CONFIG_ADDRESS, address);
     uint32_t value = x86_inl(PCI_CONFIG_DATA);
-    x86_irq_restore(flags);
+    arch_irq_restore(flags);
     return value;
 }
 
@@ -38,10 +39,10 @@ static void pci_write_config(uint8_t bus, uint8_t device,
         | ((uint32_t)function << 8)
         | (offset & 0xfc);
 
-    uint64_t flags = x86_irq_save();
+    arch_irq_state_t flags = arch_irq_save();
     x86_outl(PCI_CONFIG_ADDRESS, address);
     x86_outl(PCI_CONFIG_DATA, value);
-    x86_irq_restore(flags);
+    arch_irq_restore(flags);
 }
 
 static uint16_t pci_read_config_word(uint8_t bus, uint8_t device,
@@ -52,10 +53,10 @@ static uint16_t pci_read_config_word(uint8_t bus, uint8_t device,
         | ((uint32_t)function << 8)
         | (offset & 0xfc);
 
-    uint64_t flags = x86_irq_save();
+    arch_irq_state_t flags = arch_irq_save();
     x86_outl(PCI_CONFIG_ADDRESS, address);
     uint16_t value = x86_inw(PCI_CONFIG_DATA + (offset & 2));
-    x86_irq_restore(flags);
+    arch_irq_restore(flags);
     return value;
 }
 
@@ -68,10 +69,10 @@ static void pci_write_config_word(uint8_t bus, uint8_t device,
         | ((uint32_t)function << 8)
         | (offset & 0xfc);
 
-    uint64_t flags = x86_irq_save();
+    arch_irq_state_t flags = arch_irq_save();
     x86_outl(PCI_CONFIG_ADDRESS, address);
     x86_outw(PCI_CONFIG_DATA + (offset & 2), value);
-    x86_irq_restore(flags);
+    arch_irq_restore(flags);
 }
 
 static uint8_t pci_bar_slot_count(uint8_t header_type) {
@@ -217,14 +218,14 @@ bool pci_probe_bar_size(const struct pci_device_info *device,
         return false;
     }
 
-    uint64_t flags = x86_irq_save();
+    arch_irq_state_t flags = arch_irq_save();
     uint32_t vendor_device = pci_read_config(device->bus, device->device,
                                             device->function,
                                             PCI_VENDOR_DEVICE);
     if (!pci_device_present(vendor_device)
         || (uint16_t)vendor_device != device->vendor_id
         || (uint16_t)(vendor_device >> 16) != device->device_id) {
-        x86_irq_restore(flags);
+        arch_irq_restore(flags);
         return false;
     }
 
@@ -237,7 +238,7 @@ bool pci_probe_bar_size(const struct pci_device_info *device,
     if (io_bar != (bar->kind == PCI_BAR_IO)
         || current_64_bit != bar->is_64_bit
         || (!io_bar && memory_type == 3)) {
-        x86_irq_restore(flags);
+        arch_irq_restore(flags);
         return false;
     }
 
@@ -302,7 +303,7 @@ bool pci_probe_bar_size(const struct pci_device_info *device,
         }
     }
 
-    x86_irq_restore(flags);
+    arch_irq_restore(flags);
     if (!pci_power_of_two(probed_size)) {
         return false;
     }

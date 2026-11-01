@@ -3,6 +3,7 @@
 
 #include <limine.h>
 
+#include "arch/irq.h"
 #include "arch/mmio.h"
 #include "mmio.h"
 #include "io.h"
@@ -249,7 +250,7 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
     uint32_t virtual_page;
     uint8_t slot_index;
     uint8_t free_slot = MMIO_MAX_MAPPINGS;
-    uint64_t irq_flags;
+    arch_irq_state_t irq_flags;
 
     if (!mmio_initialized || mapping == 0 || length == 0
         || !add_u64(physical_address, length, &physical_end)) {
@@ -272,9 +273,9 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
     }
 
     page_count = (uint32_t)(rounded_span / PAGE_SIZE);
-    irq_flags = x86_irq_save();
+    irq_flags = arch_irq_save();
     if (physical_range_is_mapped(physical_page, page_count)) {
-        x86_irq_restore(irq_flags);
+        arch_irq_restore(irq_flags);
         return false;
     }
 
@@ -286,7 +287,7 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
     }
     if (free_slot == MMIO_MAX_MAPPINGS
         || !find_virtual_run(page_count, &virtual_page)) {
-        x86_irq_restore(irq_flags);
+        arch_irq_restore(irq_flags);
         return false;
     }
 
@@ -304,7 +305,7 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
                     + (uint64_t)rollback * PAGE_SIZE;
                 unmap_page(rollback_virtual, rollback_physical);
             }
-            x86_irq_restore(irq_flags);
+            arch_irq_restore(irq_flags);
             return false;
         }
     }
@@ -327,7 +328,7 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
     mapping->length = length;
     mapping->backend_cookie = ((uint64_t)slot->generation << 8) | free_slot;
 
-    x86_irq_restore(irq_flags);
+    arch_irq_restore(irq_flags);
     return true;
 }
 
@@ -336,7 +337,7 @@ bool x86_mmio_unmap(struct mmio_mapping *mapping) {
     uint32_t generation;
     struct mmio_slot *slot;
     uint64_t virtual_base;
-    uint64_t irq_flags;
+    arch_irq_state_t irq_flags;
 
     if (!mmio_initialized || mapping == 0 || mapping->address == 0) {
         return false;
@@ -348,19 +349,19 @@ bool x86_mmio_unmap(struct mmio_mapping *mapping) {
         return false;
     }
 
-    irq_flags = x86_irq_save();
+    irq_flags = arch_irq_save();
     slot = &mmio_slots[slot_index];
     if (!slot->active || slot->generation != generation
         || slot->length != mapping->length
         || mapping->physical_address != slot->requested_physical_address) {
-        x86_irq_restore(irq_flags);
+        arch_irq_restore(irq_flags);
         return false;
     }
 
     virtual_base = mmio_window_base + (uint64_t)slot->virtual_page * PAGE_SIZE;
     if (mapping->address != (volatile void *)(uintptr_t)(virtual_base
             + (slot->requested_physical_address - slot->physical_base))) {
-        x86_irq_restore(irq_flags);
+        arch_irq_restore(irq_flags);
         return false;
     }
     for (uint32_t page = 0; page < slot->page_count; page++) {
@@ -369,7 +370,7 @@ bool x86_mmio_unmap(struct mmio_mapping *mapping) {
             + (uint64_t)page * PAGE_SIZE;
 
         if (!page_matches(virtual_address, physical_address)) {
-            x86_irq_restore(irq_flags);
+            arch_irq_restore(irq_flags);
             return false;
         }
     }
@@ -390,7 +391,7 @@ bool x86_mmio_unmap(struct mmio_mapping *mapping) {
     }
     *mapping = (struct mmio_mapping){0};
 
-    x86_irq_restore(irq_flags);
+    arch_irq_restore(irq_flags);
     return true;
 }
 

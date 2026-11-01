@@ -4,6 +4,7 @@
 #include <limine.h>
 
 #include "pci.h"
+#include "arch/irq.h"
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
@@ -48,17 +49,11 @@ static volatile uint64_t limine_requests_start[] = LIMINE_REQUESTS_START_MARKER;
 __attribute__((used, section(".limine_requests_end")))
 static volatile uint64_t limine_requests_end[] = LIMINE_REQUESTS_END_MARKER;
 
-static __attribute__((noreturn)) void halt_cpu(void) {
-    for (;;) {
-        __asm__ volatile ("cli; hlt");
-    }
-}
-
 static __attribute__((noreturn)) void panic(const char *message) {
     serial_write("PANIC: ");
     serial_write(message);
     serial_write("\n");
-    halt_cpu();
+    arch_cpu_halt();
 }
 
 static const char *memory_type_name(uint64_t type) {
@@ -412,5 +407,5 @@ void kmain(void) {
     }
     report_pci_devices();
     serial_write("Boot information report complete; kernel halted.\n");
-    halt_cpu();
+    arch_cpu_halt();
 }

@@ -33,16 +33,4 @@ static inline uint32_t x86_inl(uint16_t port) {
     return value;
 }
 
-static inline uint64_t x86_irq_save(void) {
-    uint64_t flags;
-    __asm__ volatile ("pushfq; popq %0; cli" : "=r"(flags) : : "memory");
-    return flags;
-}
-
-static inline void x86_irq_restore(uint64_t flags) {
-    if ((flags & (1ULL << 9)) != 0) {
-        __asm__ volatile ("sti" : : : "memory");
-    }
-}
-
 #endif
