@@ -53,11 +53,11 @@ implementations are present, while the active image still selects only the
 x86-64 implementation. This is an instruction-level foundation, not evidence
 that those targets boot or that interrupt controllers are configured.
 
-The physical page allocator remains tied to the current Limine memory-map
-structure. Before the first non-x86 boot path is added, bootloader responses
-must be normalized into kernel-owned boot information, or the allocator must
-receive a small generic range list. The kernel should not make its memory
-policy depend on Limine response structures.
+The physical page allocator accepts a generic region source and a
+physical-to-virtual conversion callback. The current x86 Limine adapter maps
+Limine regions into that contract. AArch64/RV64 can provide their own Limine
+adapters; the MIPS boot path can provide a different memory map and direct-map
+policy without changing allocator policy.
 
 ## AArch64
 

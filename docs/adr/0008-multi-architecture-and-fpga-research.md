@@ -69,6 +69,8 @@ that target FPGA and ASIC, including CVA6.
 - [RISC-V SBI specification](https://docs.riscv.org/reference/sbi/intro.html)
 - [QEMU RISC-V `virt` platform](https://www.qemu.org/docs/master/system/riscv/virt.html)
 - [CVA6 FPGA and ASIC project documentation](https://github.com/openhwfoundation/cva6/blob/master/docs/index.rst)
+- [CVA6 FPGA integration tutorial](https://github.com/openhwfoundation/cva6/blob/master/tutorials/fpga.md)
+- [QEMU Shakti C / Arty A7 reference platform](https://www.qemu.org/docs/master/system/riscv/shakti-c.html)
 - [QEMU MIPS system emulator](https://www.qemu.org/docs/master/system/target-mips.html)
 
 ## Revisit when

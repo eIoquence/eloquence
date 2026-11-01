@@ -34,6 +34,13 @@ static volatile struct limine_hhdm_request hhdm_request = {
     .revision = 0
 };
 
+struct limine_page_allocator_context {
+    const struct limine_memmap_response *memory_map;
+    uint64_t hhdm_offset;
+};
+
+static struct limine_page_allocator_context page_allocator_context;
+
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
     .id = LIMINE_PAGING_MODE_REQUEST_ID,
@@ -106,14 +113,58 @@ static void report_memory_map(void) {
     }
 }
 
+static bool read_limine_memory_region(const void *context, uint64_t index,
+                                     struct page_allocator_region *region) {
+    const struct limine_page_allocator_context *limine_context = context;
+    const struct limine_memmap_response *memory_map;
+    const struct limine_memmap_entry *entry;
+
+    if (limine_context == 0 || region == 0) {
+        return false;
+    }
+    memory_map = limine_context->memory_map;
+    if (memory_map == 0 || index >= memory_map->entry_count
+        || memory_map->entries == 0) {
+        return false;
+    }
+
+    entry = memory_map->entries[index];
+    if (entry == 0) {
+        return false;
+    }
+
+    region->base = entry->base;
+    region->length = entry->length;
+    region->usable = entry->type == LIMINE_MEMMAP_USABLE;
+    return true;
+}
+
+static void *limine_physical_to_virtual(const void *context,
+                                        uint64_t physical_address) {
+    const struct limine_page_allocator_context *limine_context = context;
+
+    if (limine_context == 0
+        || limine_context->hhdm_offset > UINT64_MAX - physical_address) {
+        return 0;
+    }
+
+    return (void *)(uintptr_t)(limine_context->hhdm_offset + physical_address);
+}
+
 static void report_page_allocator(void) {
     struct page_frame frame;
+    struct page_allocator_source source;
 
-    if (hhdm_request.response == 0) {
-        panic("Limine did not return the HHDM offset");
+    if (hhdm_request.response == 0 || memory_map_request.response == 0) {
+        panic("Limine did not return the memory map and HHDM offset");
     }
-    if (!page_allocator_initialize(memory_map_request.response,
-                                   hhdm_request.response->offset)) {
+    page_allocator_context.memory_map = memory_map_request.response;
+    page_allocator_context.hhdm_offset = hhdm_request.response->offset;
+    source.context = &page_allocator_context;
+    source.region_count = memory_map_request.response->entry_count;
+    source.read_region = read_limine_memory_region;
+    source.physical_to_virtual = limine_physical_to_virtual;
+    if (!page_allocator_initialize(&source)) {
         panic("could not initialize the physical page allocator");
     }
     if (!page_allocator_allocate(&frame)) {

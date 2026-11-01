@@ -1,16 +1,13 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-#include <limine.h>
-
 #include "page_allocator.h"
 
 #define PAGE_SIZE 4096ULL
 #define PAGE_MASK (PAGE_SIZE - 1)
 
 struct page_allocator_state {
-    const struct limine_memmap_response *memory_map;
-    uint64_t hhdm_offset;
+    struct page_allocator_source source;
     uint64_t region_index;
     uint64_t next_physical_address;
     bool region_started;
@@ -35,31 +32,25 @@ static bool align_up_to_page(uint64_t address, uint64_t *aligned_address) {
     return add_u64(address, adjustment, aligned_address);
 }
 
-bool page_allocator_initialize(const struct limine_memmap_response *memory_map,
-                               uint64_t hhdm_offset) {
+bool page_allocator_initialize(const struct page_allocator_source *source) {
     allocator.initialized = false;
 
-    if (memory_map == 0
-        || (memory_map->entry_count != 0 && memory_map->entries == 0)) {
+    if (source == 0 || source->read_region == 0
+        || source->physical_to_virtual == 0) {
         return false;
     }
 
-    for (uint64_t i = 0; i < memory_map->entry_count; i++) {
-        const struct limine_memmap_entry *entry = memory_map->entries[i];
+    for (uint64_t i = 0; i < source->region_count; i++) {
+        struct page_allocator_region region;
         uint64_t end_address;
 
-        if (entry == 0 || !add_u64(entry->base, entry->length, &end_address)) {
-            return false;
-        }
-        if (entry->type == LIMINE_MEMMAP_USABLE
-            && end_address > 0
-            && hhdm_offset > UINT64_MAX - (end_address - 1)) {
+        if (!source->read_region(source->context, i, &region)
+            || !add_u64(region.base, region.length, &end_address)) {
             return false;
         }
     }
 
-    allocator.memory_map = memory_map;
-    allocator.hhdm_offset = hhdm_offset;
+    allocator.source = *source;
     allocator.region_index = 0;
     allocator.next_physical_address = 0;
     allocator.region_started = false;
@@ -72,19 +63,24 @@ bool page_allocator_allocate(struct page_frame *frame) {
         return false;
     }
 
-    while (allocator.region_index < allocator.memory_map->entry_count) {
-        const struct limine_memmap_entry *entry =
-            allocator.memory_map->entries[allocator.region_index];
-        uint64_t end_address = entry->base + entry->length;
+    while (allocator.region_index < allocator.source.region_count) {
+        struct page_allocator_region region;
+        uint64_t end_address;
 
-        if (entry->type != LIMINE_MEMMAP_USABLE) {
+        if (!allocator.source.read_region(allocator.source.context,
+                                          allocator.region_index, &region)
+            || !add_u64(region.base, region.length, &end_address)) {
+            return false;
+        }
+
+        if (!region.usable) {
             allocator.region_index++;
             allocator.region_started = false;
             continue;
         }
 
         if (!allocator.region_started) {
-            if (!align_up_to_page(entry->base,
+            if (!align_up_to_page(region.base,
                                   &allocator.next_physical_address)) {
                 return false;
             }
@@ -99,16 +95,16 @@ bool page_allocator_allocate(struct page_frame *frame) {
         if (allocator.next_physical_address <= end_address
             && end_address - allocator.next_physical_address >= PAGE_SIZE) {
             uint64_t physical_address = allocator.next_physical_address;
-            uint64_t virtual_address;
-
-            if (!add_u64(allocator.hhdm_offset, physical_address,
-                         &virtual_address)) {
+            void *virtual_address = allocator.source.physical_to_virtual(
+                allocator.source.context, physical_address);
+            if (virtual_address == 0
+                || ((uintptr_t)virtual_address & PAGE_MASK) != 0) {
                 return false;
             }
 
             allocator.next_physical_address += PAGE_SIZE;
             frame->physical_address = physical_address;
-            frame->virtual_address = (void *)(uintptr_t)virtual_address;
+            frame->virtual_address = virtual_address;
             return true;
         }
 

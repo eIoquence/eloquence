@@ -4,15 +4,28 @@
 #include <stdbool.h>
 #include <stdint.h>
 
-struct limine_memmap_response;
+struct page_allocator_region {
+    uint64_t base;
+    uint64_t length;
+    bool usable;
+};
+
+struct page_allocator_source {
+    const void *context;
+    uint64_t region_count;
+    bool (*read_region)(const void *context, uint64_t index,
+                        struct page_allocator_region *region);
+    /* Returns a page-aligned virtual mapping, or NULL when unavailable. */
+    void *(*physical_to_virtual)(const void *context,
+                                 uint64_t physical_address);
+};
 
 struct page_frame {
     uint64_t physical_address;
     void *virtual_address;
 };
 
-bool page_allocator_initialize(const struct limine_memmap_response *memory_map,
-                               uint64_t hhdm_offset);
+bool page_allocator_initialize(const struct page_allocator_source *source);
 bool page_allocator_allocate(struct page_frame *frame);
 
 #endif
