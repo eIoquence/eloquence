@@ -25,16 +25,33 @@ TARGET_LDFLAGS ?= --target=x86_64-unknown-none-elf -fuse-ld=lld -nostdlib -stati
 	-Wl,--build-id=none -Wl,--gc-sections -Wl,-z,max-page-size=0x1000 \
 	-Wl,-z,noexecstack -Wl,-m,elf_x86_64 -Wl,-T,linker.ld
 
+AARCH64_CFLAGS ?= --target=aarch64-unknown-none-elf -std=gnu11 -O2 \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin -fno-stack-protector \
+	-fno-stack-check -fno-pic -fno-pie -fno-unwind-tables \
+	-fno-asynchronous-unwind-tables -ffunction-sections -fdata-sections \
+	-MMD -MP -march=armv8-a -mgeneral-regs-only -mcmodel=large -nostdinc \
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel \
+	-Ikernel/arch/aarch64
+AARCH64_ASFLAGS ?= --target=aarch64-unknown-none-elf -ffreestanding \
+	-fno-pic -fno-pie -march=armv8-a -mgeneral-regs-only -mcmodel=large
+AARCH64_LDFLAGS ?= --target=aarch64-unknown-none-elf -fuse-ld=lld \
+	-nostdlib -static -Wl,--build-id=none -Wl,--gc-sections \
+	-Wl,-z,max-page-size=0x1000 -Wl,-z,noexecstack \
+	-Wl,-T,linker-aarch64.ld
+
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/serial.o \
 	build/arch/x86_64/pci.o build/arch/x86_64/paging.o \
 	build/arch/x86_64/mmio.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/memory/page_allocator.o
+AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
+	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
 
 -include $(KERNEL_OBJECTS:.o=.d)
+-include $(AARCH64_OBJECTS:.o=.d)
 
-.PHONY: all iso run clean
+.PHONY: all iso run aarch64-objects aarch64-elf clean
 
 all: iso
 
@@ -70,6 +87,21 @@ build/%.o: kernel/%.c
 build/%.o: kernel/%.S
 	mkdir -p $(@D)
 	$(TARGET_CC) $(TARGET_ASFLAGS) -c $< -o $@
+
+build/aarch64/%.o: kernel/%.c
+	mkdir -p $(@D)
+	$(TARGET_CC) $(AARCH64_CFLAGS) -c $< -o $@
+
+build/aarch64/%.o: kernel/%.S
+	mkdir -p $(@D)
+	$(TARGET_CC) $(AARCH64_ASFLAGS) -c $< -o $@
+
+aarch64-objects: $(AARCH64_OBJECTS)
+
+build/aarch64/eloquence.elf: $(AARCH64_OBJECTS) linker-aarch64.ld
+	$(TARGET_CC) $(AARCH64_LDFLAGS) -o $@ $(AARCH64_OBJECTS)
+
+aarch64-elf: build/aarch64/eloquence.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_CC) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)

@@ -8,7 +8,7 @@ The initial research focus is a hardware resource lifecycle:
 
 `Discovery → Authorization → Allocation → Ownership → Revocation → Release`
 
-The first functional baseline targets x86-64 under QEMU. The research program now plans AArch64 and RV64 ports, an RV64 FPGA experiment, and a separate MIPS port. These targets are planned, not currently implemented. The first hardware-facing slice is PCI device discovery and controlled MMIO access. DMA/IOMMU and physical-hardware performance claims remain later work.
+The first functional baseline targets x86-64 under QEMU. An initial AArch64 Limine bootstrap slice now provides framebuffer diagnostics and has a separate object-compilation target; it has not yet been linked or booted. RV64, the RV64 FPGA experiment, and MIPS remain planned. The first hardware-facing slice is PCI device discovery and controlled MMIO access. DMA/IOMMU and physical-hardware performance claims remain later work.
 
 The project does not claim novelty for capability systems or exokernels in general. Research claims will be made only after comparison with prior systems and reproducible experiments.
 
@@ -41,12 +41,24 @@ QEMU is the functional baseline. Timing results from emulation will not be prese
 
 ## Development
 
-Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, and `xorriso`. Running the image also requires `qemu-system-x86_64`.
+Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, and `xorriso`. Running the x86-64 image also requires `qemu-system-x86_64`.
 
 ```sh
 make iso
 make run
 ```
+
+Compile the current AArch64 bootstrap objects separately with:
+
+```sh
+make aarch64-objects
+```
+
+This target does not build or boot an image. The AArch64 kernel still needs a
+linked-image check, PL011 setup through a device-tree-derived MMIO mapping, and
+a repeatable boot observation before it can be described as supported. Until
+that UART path exists, the bootstrap requires a compatible framebuffer and
+halts without visible diagnostics if Limine provides none.
 
 The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-256 before use. `make clean` removes generated files and the downloaded bootloader.
 

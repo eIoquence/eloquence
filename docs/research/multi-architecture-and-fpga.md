@@ -62,13 +62,25 @@ policy without changing allocator policy.
 ## AArch64
 
 Use QEMU `virt` with an explicit AArch64 CPU. Initial bring-up needs a console
-through PL011 and must inspect the actual entry exception level. The Limine
-protocol permits entry at EL1 or EL2 with VHE depending on the firmware and
-bootloader path, so the kernel must not assume one fixed EL. Page-table code
-must state its selected translation granule and memory attributes; the initial
-implementation should support a single declared granule rather than silently
-assuming that all Arm machines use the same layout. Interrupt work must use
-the platform's GIC description.
+and must inspect the actual entry exception level. The first source slice
+requests the Limine framebuffer, memory map, and DTB, then paints boot
+diagnostics through a 32-bit RGB framebuffer. `make aarch64-objects` compiles
+this path and the AArch64 interrupt primitives; it does not link or boot a
+kernel image. This is not a PL011 driver: the next platform step is to discover
+the UART through the DTB and map its physical range with Device attributes
+before accessing it. Limine does not promise that arbitrary reserved MMIO is
+available through the HHDM. Until then, a missing or unsupported framebuffer
+causes an unobservable stop because there is no serial fallback.
+
+The Limine protocol permits entry at EL1 or EL2 with VHE depending on the
+firmware and bootloader path, so the kernel must not assume one fixed EL. The
+diagnostic records the current EL when a compatible framebuffer is present.
+Page-table code must state its selected translation granule and memory
+attributes; the initial implementation should support a single declared
+granule rather than silently assuming that all Arm machines use the same
+layout. Interrupt work must use the platform's GIC description. A linked ELF
+and repeatable boot observation are still required before this target can be
+called bootable.
 
 ## RISC-V and FPGA
 
