@@ -68,7 +68,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
 	build/lib/memory.o build/memory/page_allocator.o \
-	build/storage/block_device.o \
+	build/storage/block_device.o build/storage/gpt.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/user/mmio_demo.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \

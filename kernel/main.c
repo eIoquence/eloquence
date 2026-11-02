@@ -15,6 +15,7 @@
 #include "paging.h"
 #include "serial.h"
 #include "storage/block_device.h"
+#include "storage/gpt.h"
 #include "user/mmio_demo.h"
 #include "user_mode.h"
 
@@ -45,6 +46,7 @@ struct limine_page_allocator_context {
 };
 
 static struct limine_page_allocator_context page_allocator_context;
+static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
@@ -388,6 +390,37 @@ static void report_block_devices(void) {
         serial_write(" sector-size=");
         serial_write_decimal(device->sector_size);
         serial_write("\n");
+
+        uint32_t partition_count = 0;
+        enum gpt_scan_result result = gpt_scan_device(
+            i, discovered_partitions, GPT_MAX_PARTITIONS, &partition_count);
+        if (result != GPT_SCAN_OK) {
+            serial_write("    primary GPT: ");
+            switch (result) {
+                case GPT_SCAN_NOT_PRESENT: serial_write("not present"); break;
+                case GPT_SCAN_IO_ERROR: serial_write("read error"); break;
+                case GPT_SCAN_LIMIT_EXCEEDED: serial_write("limit exceeded"); break;
+                case GPT_SCAN_INVALID: serial_write("invalid"); break;
+                case GPT_SCAN_OK: break;
+            }
+            serial_write("\n");
+            continue;
+        }
+
+        serial_write("    primary GPT partitions: ");
+        serial_write_decimal(partition_count);
+        serial_write("\n");
+        for (uint32_t partition = 0; partition < partition_count; partition++) {
+            const struct gpt_partition *entry =
+                &discovered_partitions[partition];
+            serial_write("      entry=");
+            serial_write_decimal(entry->entry_number);
+            serial_write(" first-lba=");
+            serial_write_decimal(entry->first_lba);
+            serial_write(" last-lba=");
+            serial_write_decimal(entry->last_lba);
+            serial_write("\n");
+        }
     }
 }
 
