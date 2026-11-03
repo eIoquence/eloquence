@@ -39,8 +39,10 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    checked before reading its MSR; IMCR routing is selected where available,
    while QEMU q35 retained firmware routing and still delivered ticks. x2APIC
    is not yet supported.
-4. Preemptive single-CPU scheduler, explicit address-space/page-table cleanup,
-   and a bounded ELF loader to launch a separate diagnostic program.
+4. Bounded static ELF loading from FAT32 and synchronous ring-3 launch/exit.
+   **Partially implemented:** `HELLO.ELF` runs in ring 3 and returns status 42;
+   loaded code/stack pages are reclaimed. Scheduler, dynamic linking, and page
+   table teardown remain open.
 5. VirtIO Block, primary/backup GPT handling, and read-only FAT32 access.
    **Partially implemented:** VirtIO legacy PCI block, primary GPT, FAT32 root
    listing, and bounded short-name file reads. Backup GPT recovery and all

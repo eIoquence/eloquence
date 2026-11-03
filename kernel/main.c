@@ -22,6 +22,7 @@
 #include "storage/gpt.h"
 #include "storage/fat32.h"
 #include "user/mmio_demo.h"
+#include "user/elf_loader.h"
 #include "user_mode.h"
 
 __attribute__((used, section(".limine_requests")))
@@ -612,22 +613,34 @@ static void report_fat32_root(uint64_t device_index,
     }
 }
 
-static void report_fat32_file(uint64_t device_index,
-                              uint64_t partition_number,
-                              const char *short_name) {
+static bool read_fat32_file(uint64_t device_index,
+                            uint64_t partition_number,
+                            const char *short_name, uint32_t *bytes_read) {
     struct fat32_volume volume;
-    uint32_t bytes_read = 0;
 
-    if (!mount_fat32(device_index, partition_number, &volume)) {
-        return;
+    if (bytes_read == 0
+        || !mount_fat32(device_index, partition_number, &volume)) {
+        return false;
     }
     enum fat32_result result = fat32_read_root_file(
         &volume, short_name, fat32_file_buffer, sizeof(fat32_file_buffer),
-        &bytes_read);
+        bytes_read);
     if (result != FAT32_OK) {
         serial_write("FAT32 file read failed: ");
         serial_write(fat32_result_name(result));
         serial_write("\n");
+        return false;
+    }
+    return true;
+}
+
+static void report_fat32_file(uint64_t device_index,
+                              uint64_t partition_number,
+                              const char *short_name) {
+    uint32_t bytes_read = 0;
+
+    if (!read_fat32_file(device_index, partition_number, short_name,
+                         &bytes_read)) {
         return;
     }
 
@@ -654,6 +667,48 @@ static void report_fat32_file(uint64_t device_index,
     if (bytes_read == 0 || fat32_file_buffer[bytes_read - 1] != '\n') {
         serial_write("\n");
     }
+}
+
+static void run_fat32_elf(uint64_t device_index,
+                          uint64_t partition_number,
+                          const char *short_name) {
+    uint32_t image_size = 0;
+    uint64_t exit_status = 0;
+    bool faulted = false;
+
+    if (!read_fat32_file(device_index, partition_number, short_name,
+                         &image_size)) {
+        return;
+    }
+    if (!x86_user_elf_run(fat32_file_buffer, image_size,
+                          &exit_status, &faulted)) {
+        serial_write("ELF image rejected or process setup failed.\n");
+        return;
+    }
+    if (faulted) {
+        serial_write("Process terminated after CPU exception vector ");
+        serial_write_decimal(exit_status);
+        serial_write(".\n");
+        return;
+    }
+    serial_write("Process exited with status ");
+    serial_write_decimal(exit_status);
+    serial_write(".\n");
+}
+
+static bool parse_short_name(const char *text, char *name, size_t capacity) {
+    size_t length = 0;
+
+    if (text == 0 || name == 0 || capacity < 2) {
+        return false;
+    }
+    while (text[length] != '\0' && text[length] != ' '
+           && length + 1 < capacity) {
+        name[length] = text[length];
+        length++;
+    }
+    name[length] = '\0';
+    return length != 0 && text[length] == '\0';
 }
 
 static void report_system_info(void) {
@@ -747,6 +802,7 @@ static void handle_monitor_command(const char *line, void *context) {
         serial_write("  gpt list [index]  list primary GPT partitions\n");
         serial_write("  fs list DEV PART  list a FAT32 root directory\n");
         serial_write("  fs cat DEV PART NAME  print a short-name text file\n");
+        serial_write("  run DEV PART NAME  launch a static x86-64 ELF in ring 3\n");
         serial_write("  halt              halt the CPU\n");
         return;
     }
@@ -832,18 +888,26 @@ static void handle_monitor_command(const char *line, void *context) {
             serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
             return;
         }
-        size_t name_length = 0;
-        while (remaining[name_length] != '\0' && remaining[name_length] != ' '
-               && name_length + 1 < sizeof(short_name)) {
-            short_name[name_length] = remaining[name_length];
-            name_length++;
-        }
-        short_name[name_length] = '\0';
-        if (name_length == 0 || remaining[name_length] != '\0') {
+        if (!parse_short_name(remaining, short_name, sizeof(short_name))) {
             serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
             return;
         }
         report_fat32_file(device_index, partition_number, short_name);
+        return;
+    }
+    if (command_has_prefix(line, "run")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        char short_name[FAT32_SHORT_NAME_LENGTH];
+        if (!parse_filesystem_target(skip_spaces(line + 3), &device_index,
+                                     &partition_number, &remaining)
+            || !parse_short_name(remaining, short_name,
+                                 sizeof(short_name))) {
+            serial_write("Usage: run device-index gpt-partition-number 8.3-elf-name\n");
+            return;
+        }
+        run_fat32_elf(device_index, partition_number, short_name);
         return;
     }
     if (text_equals(line, "halt")) {

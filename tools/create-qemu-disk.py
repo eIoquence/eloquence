@@ -15,6 +15,12 @@ GPT_ARRAY_SECTORS = GPT_ENTRY_COUNT * GPT_ENTRY_SIZE // SECTOR_SIZE
 PARTITION_START = 2048
 FAT_RESERVED_SECTORS = 32
 FAT_COUNT = 2
+ELF64_HEADER_SIZE = 64
+ELF64_PROGRAM_HEADER_SIZE = 56
+HELLO_TEXT = (
+    b"Welcome to Eloquence.\r\n"
+    b"VirtIO block and FAT32 read-only access are online.\r\n"
+)
 
 
 def put_u16(buffer: bytearray, offset: int, value: int) -> None:
@@ -53,6 +59,22 @@ def make_gpt_header(
 
 def put_u64(buffer: bytearray, offset: int, value: int) -> None:
     struct.pack_into("<Q", buffer, offset, value)
+
+
+def make_hello_elf() -> bytes:
+    code = bytes.fromhex("48c7c00000000048c7c72a0000000f05")
+    entry = 0x400000 + ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF" + bytes((2, 1, 1, 0)) + bytes(8),
+        2, 62, 1, entry, ELF64_HEADER_SIZE, 0, 0, 64, 56, 1, 0, 0, 0,
+    )
+    program_header = struct.pack(
+        "<IIQQQQQQ",
+        1, 5, ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE,
+        entry, 0, len(code), len(code), 16,
+    )
+    return header + program_header + code
 
 
 def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, bytes, bytes, int]:
@@ -95,7 +117,7 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     fs_info = bytearray(SECTOR_SIZE)
     put_u32(fs_info, 0, 0x41615252)
     put_u32(fs_info, 484, 0x61417272)
-    put_u32(fs_info, 488, cluster_count - 2)
+    put_u32(fs_info, 488, cluster_count - 3)
     put_u32(fs_info, 492, 4)
     put_u32(fs_info, 508, 0xAA550000)
 
@@ -104,18 +126,15 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     put_u32(fat, 4, 0xFFFFFFFF)
     put_u32(fat, 8, 0x0FFFFFFF)
     put_u32(fat, 12, 0x0FFFFFFF)
+    put_u32(fat, 16, 0x0FFFFFFF)
 
     root = bytearray(SECTOR_SIZE)
     root[:11] = b"HELLO   TXT"
     root[11] = 0x20
     put_u16(root, 20, 0)
     put_u16(root, 26, 3)
-    contents = (
-        b"Welcome to Eloquence.\r\n"
-        b"VirtIO block and FAT32 read-only access are online.\r\n"
-    )
-    put_u32(root, 28, len(contents))
-    return bytes(boot), bytes(fs_info), bytes(fat), len(contents)
+    put_u32(root, 28, len(HELLO_TEXT))
+    return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT)
 
 
 def create_image(path: Path, size_mib: int, force: bool) -> None:
@@ -153,6 +172,7 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
     boot, fs_info, fat, contents_size = make_fat32_volume(
         partition_sectors, PARTITION_START
     )
+    hello_elf = make_hello_elf()
 
     mode = "wb" if force else "xb"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -201,12 +221,16 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
         put_u16(root, 20, 0)
         put_u16(root, 26, 3)
         put_u32(root, 28, contents_size)
+        root[32:43] = b"HELLO   ELF"
+        root[43] = 0x20
+        put_u16(root, 52, 0)
+        put_u16(root, 58, 4)
+        put_u32(root, 60, len(hello_elf))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
-        image.write(
-            b"Welcome to Eloquence.\r\n"
-            b"VirtIO block and FAT32 read-only access are online.\r\n"
-        )
+        image.write(HELLO_TEXT)
+        image.seek((data_start + 2) * SECTOR_SIZE)
+        image.write(hello_elf)
 
 
 def main() -> None:

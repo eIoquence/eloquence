@@ -6,7 +6,7 @@ TARGET_CC ?= clang
 TARGET_LD ?= ld.lld
 HOST_CC ?= cc
 QEMU ?= qemu-system-x86_64
-QEMU_DISK ?= build/eloquence-qemu.raw
+QEMU_DISK ?= build/eloquence-userland.raw
 PYTHON ?= python3
 TARGET_ASFLAGS ?= --target=x86_64-unknown-none-elf -ffreestanding \
 	-fno-pic -fno-pie -m64 -mno-red-zone -mcmodel=kernel
@@ -72,7 +72,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/monitor/serial_shell.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/drivers/virtio/virtio_blk.o \
-	build/user/mmio_demo.o
+	build/user/mmio_demo.o build/user/elf_loader.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
 	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
 RISCV64_OBJECTS := build/riscv64/arch/riscv64/main.o \
