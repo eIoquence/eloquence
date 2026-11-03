@@ -20,5 +20,6 @@ writing to the serial console. `run` can pass a root file to the bounded static
 x86-64 ELF loader. There is no FAT write support, long-file-name handling,
 subdirectory traversal, or crash-recovery mechanism.
 
-The built-in QEMU image provides a reproducible `HELLO.TXT` sample. See the
-[storage runtime record](../experiments/2026-11-03-qemu-storage-fs.md).
+The built-in QEMU image provides `HELLO.TXT`, `HELLO.ELF`, and `SHELL.ELF`
+samples. See the [storage runtime record](../experiments/2026-11-03-qemu-storage-fs.md)
+and [user-shell run](../experiments/2026-11-03-qemu-userspace-shell.md).

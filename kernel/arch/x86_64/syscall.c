@@ -5,7 +5,7 @@
 #include "domain/domain.h"
 #include "serial.h"
 #include "syscall.h"
-#include "syscall_abi.h"
+#include "eloquence/syscall_abi.h"
 #include "user_mode.h"
 
 static bool decode_handle(uint64_t packed,
@@ -21,7 +21,7 @@ static bool decode_handle(uint64_t packed,
     return true;
 }
 
-static uint64_t pack_result(enum mmio_capability_result result,
+static uint64_t pack_result(uint32_t result,
                             uint32_t value) {
     return ((uint64_t)result << 32) | value;
 }
@@ -39,8 +39,17 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
         case ELOQUENCE_SYSCALL_CONSOLE_WRITE_CHAR:
             return pack_result(
                 serial_write_user_char(frame->rdi)
-                    ? MMIO_CAPABILITY_OK : MMIO_CAPABILITY_INVALID_ARGUMENT,
+                    ? ELOQUENCE_SYSCALL_RESULT_OK
+                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                 0);
+        case ELOQUENCE_SYSCALL_CONSOLE_READ_CHAR: {
+            char value;
+            if (serial_try_read_char(&value)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                                   (uint8_t)value);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+        }
         default:
             break;
     }

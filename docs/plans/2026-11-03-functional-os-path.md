@@ -1,6 +1,6 @@
 # Functional OS Path
 
-**Status:** Active; serial monitor, 100 Hz clock, ring-3 capability demo, VirtIO block, GPT, and read-only FAT32 booted and exercised in QEMU
+**Status:** Active; QEMU boots into a ring-3 serial shell from FAT32, then returns to the kernel monitor on shell exit
 
 ## Goal
 
@@ -48,9 +48,11 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    listing, and bounded short-name file reads. Backup GPT recovery and all
    filesystem writes remain open.
 6. Minimal user-facing console ABI.
-   **Partially implemented:** ring-3 programs can write validated ASCII one
-   character per syscall; the sample ELF prints a greeting. Console input,
-   buffering, a stable ABI, and a user-space command loop remain open.
+   **Partially implemented:** ring-3 programs can read one serial character
+   non-blockingly and write validated ASCII one character per syscall. A
+   separate compiled `SHELL.ELF` auto-starts from the first FAT32 partition
+   and supports `help`, `about`, `echo`, and `exit`. Editing, buffering, and a
+   stable ABI remain open.
 7. Scheduler and IPC, then isolated device services, network, and
    multi-architecture runtime work.
 

@@ -80,7 +80,9 @@ def make_hello_elf() -> bytes:
     return header + program_header + code
 
 
-def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, bytes, bytes, int]:
+def make_fat32_volume(
+    total_sectors: int, volume_start: int, shell_size: int
+) -> tuple[bytes, bytes, bytes, int]:
     fat_sectors = math.ceil(
         (total_sectors - FAT_RESERVED_SECTORS + 2)
         / (SECTOR_SIZE // 4 + FAT_COUNT)
@@ -88,6 +90,9 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     cluster_count = total_sectors - FAT_RESERVED_SECTORS - FAT_COUNT * fat_sectors
     if cluster_count < 65525:
         raise ValueError("partition is too small for a FAT32 test volume")
+    shell_cluster_count = math.ceil(shell_size / SECTOR_SIZE)
+    if shell_cluster_count == 0 or shell_cluster_count + 3 >= cluster_count:
+        raise ValueError("invalid shell image size for FAT32 test volume")
 
     boot = bytearray(SECTOR_SIZE)
     boot[0:3] = b"\xeb\x58\x90"
@@ -120,8 +125,8 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     fs_info = bytearray(SECTOR_SIZE)
     put_u32(fs_info, 0, 0x41615252)
     put_u32(fs_info, 484, 0x61417272)
-    put_u32(fs_info, 488, cluster_count - 3)
-    put_u32(fs_info, 492, 4)
+    put_u32(fs_info, 488, cluster_count - 3 - shell_cluster_count)
+    put_u32(fs_info, 492, 5 + shell_cluster_count)
     put_u32(fs_info, 508, 0xAA550000)
 
     fat = bytearray(fat_sectors * SECTOR_SIZE)
@@ -130,21 +135,20 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     put_u32(fat, 8, 0x0FFFFFFF)
     put_u32(fat, 12, 0x0FFFFFFF)
     put_u32(fat, 16, 0x0FFFFFFF)
-
-    root = bytearray(SECTOR_SIZE)
-    root[:11] = b"HELLO   TXT"
-    root[11] = 0x20
-    put_u16(root, 20, 0)
-    put_u16(root, 26, 3)
-    put_u32(root, 28, len(HELLO_TEXT))
+    for index in range(shell_cluster_count):
+        cluster = 5 + index
+        next_cluster = cluster + 1 if index + 1 < shell_cluster_count else 0x0FFFFFFF
+        put_u32(fat, cluster * 4, next_cluster)
     return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT)
 
 
-def create_image(path: Path, size_mib: int, force: bool) -> None:
+def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> None:
     if size_mib < 64:
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; pass --force to replace it")
+    if not shell_elf or len(shell_elf) > 4096:
+        raise ValueError("the shell ELF must be between 1 and 4096 bytes")
 
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     backup_header_lba = total_sectors - 1
@@ -173,7 +177,7 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
         backup_entries_lba, disk_guid, entries_crc,
     )
     boot, fs_info, fat, contents_size = make_fat32_volume(
-        partition_sectors, PARTITION_START
+        partition_sectors, PARTITION_START, len(shell_elf)
     )
     hello_elf = make_hello_elf()
 
@@ -229,20 +233,30 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
         put_u16(root, 52, 0)
         put_u16(root, 58, 4)
         put_u32(root, 60, len(hello_elf))
+        root[64:75] = b"SHELL   ELF"
+        root[75] = 0x20
+        put_u16(root, 84, 0)
+        put_u16(root, 90, 5)
+        put_u32(root, 92, len(shell_elf))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
         image.seek((data_start + 2) * SECTOR_SIZE)
         image.write(hello_elf)
+        for index, offset in enumerate(range(0, len(shell_elf), SECTOR_SIZE)):
+            cluster = 5 + index
+            image.seek((data_start + cluster - 2) * SECTOR_SIZE)
+            image.write(shell_elf[offset : offset + SECTOR_SIZE])
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
     parser.add_argument("--size-mib", type=int, default=64)
+    parser.add_argument("--shell", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-    create_image(args.image, args.size_mib, args.force)
+    create_image(args.image, args.size_mib, args.force, args.shell.read_bytes())
     print(f"Created {args.image} ({args.size_mib} MiB, GPT + FAT32)")
 
 

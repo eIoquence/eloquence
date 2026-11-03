@@ -25,6 +25,6 @@ with status 42.
 This is a synchronous, single-process prototype. It accepts bounded static ELF64
 executables only, has no scheduler or dynamic linker, and keeps its user
 page-table hierarchy for reuse. Code and stack frames are reclaimed after each
-run. Console output sends one validated ASCII character per syscall; there is
-no console input or argument interface, and the syscall ABI remains
-experimental.
+run. Console output sends one validated ASCII character per syscall. The newer
+`SHELL.ELF` fixture demonstrates non-blocking input; there is still no process
+argument interface, and the syscall ABI remains experimental.

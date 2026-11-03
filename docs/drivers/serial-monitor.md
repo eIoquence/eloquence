@@ -2,9 +2,11 @@
 
 **Status:** Booted and exercised in QEMU; polling monitor with PIT clock
 
-After the boot diagnostics, the kernel enters a polling command monitor on
-COM1. The monitor is kernel-resident, single-tasked, and busy-polls for input;
-it is an interim diagnostic interface, not a user-space shell.
+After boot diagnostics, the kernel runs `SHELL.ELF` from the first FAT32
+partition when it is available. The ring-3 shell uses scalar COM1 input/output
+syscalls; `exit` returns to this polling kernel monitor. Without the shell or a
+usable disk, boot falls back directly to the monitor. The monitor is
+kernel-resident, single-tasked, and busy-polls for input.
 
 | Command | Behavior |
 | --- | --- |
@@ -16,6 +18,9 @@ it is an interim diagnostic interface, not a user-space shell.
 | `disk list` | List registered block devices |
 | `gpt list` | Scan and display the primary GPT on each registered device |
 | `gpt list N` | Scan the primary GPT on block-device index `N` |
+| `fs list DEV PART` | List a FAT32 root directory |
+| `fs cat DEV PART NAME` | Print a short-name file, up to 4 KiB |
+| `run DEV PART NAME` | Launch a bounded static x86-64 ELF from FAT32 |
 | `halt` | Stop the CPU |
 
 Input is limited to 127 printable characters. Backspace and Ctrl-U edit the
@@ -32,4 +37,5 @@ QEMU q35 did not expose the optional IMCR, so firmware PIC routing was retained;
 1681 ticks in about 17 seconds. The boot-time EDU test also passed its ring-3
 read/write, read-only, foreign-domain, revocation, stale-handle, and fault
 isolation scenarios. See [the run record](../experiments/2026-11-03-qemu-x86_64-first-boot.md).
-This monitor does not provide multitasking, persistence, or a user-space shell.
+This monitor does not provide multitasking or filesystem writes. See the
+[user-space shell run](../experiments/2026-11-03-qemu-userspace-shell.md).

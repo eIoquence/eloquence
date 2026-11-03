@@ -4,7 +4,7 @@
 
 #include "domain/domain.h"
 #include "paging.h"
-#include "syscall_abi.h"
+#include "eloquence/syscall_abi.h"
 #include "user_mode.h"
 
 #define IA32_EFER 0xc0000080U
@@ -17,6 +17,7 @@
 #define EFER_SYSCALL_ENABLE (1ULL << 0)
 #define X86_RFLAGS_TRAP (1ULL << 8)
 #define X86_RFLAGS_INTERRUPT (1ULL << 9)
+#define X86_RFLAGS_FIXED (1ULL << 1)
 #define X86_RFLAGS_DIRECTION (1ULL << 10)
 #define X86_RFLAGS_NESTED_TASK (1ULL << 14)
 #define X86_RFLAGS_ALIGNMENT_CHECK (1ULL << 18)
@@ -70,7 +71,13 @@ uint64_t x86_user_return_stack;
 extern void x86_syscall_entry(void);
 extern void x86_user_enter_asm(uint64_t entry, uint64_t stack_pointer,
                                uint64_t argument0, uint64_t argument1,
-                               uint64_t argument2);
+                               uint64_t argument2, uint64_t user_rflags);
+
+static uint64_t read_rflags(void) {
+    uint64_t flags;
+    __asm__ volatile ("pushfq; popq %0" : "=r"(flags));
+    return flags;
+}
 
 static bool syscall_supported(void) {
     uint32_t max_leaf = 0x80000000U;
@@ -185,6 +192,8 @@ bool x86_user_mode_run(const struct x86_address_space *address_space,
                        uint64_t argument1, uint64_t argument2,
                        uint64_t *exit_status, bool *faulted) {
     struct x86_address_space kernel_space;
+    uint64_t kernel_rflags;
+    uint64_t user_rflags;
 
     if (!user_mode_initialized || address_space == 0
         || address_space->root_virtual_address == 0
@@ -194,14 +203,26 @@ bool x86_user_mode_run(const struct x86_address_space *address_space,
         return false;
     }
 
+    kernel_rflags = read_rflags();
+    user_rflags = X86_RFLAGS_FIXED;
+    if ((kernel_rflags & X86_RFLAGS_INTERRUPT) != 0) {
+        user_rflags |= X86_RFLAGS_INTERRUPT;
+    }
+
     x86_user_kernel_cr3 = kernel_space.root_physical_address;
     user_exit_occurred = false;
     user_fault_occurred = false;
     user_exit_status = 0;
     kernel_domain_enter(domain_id);
     x86_address_space_activate(address_space);
-    x86_user_enter_asm(entry, stack_pointer, argument0, argument1, argument2);
+    x86_user_enter_asm(entry, stack_pointer, argument0, argument1, argument2,
+                       user_rflags);
     kernel_domain_leave();
+    if ((kernel_rflags & X86_RFLAGS_INTERRUPT) != 0) {
+        __asm__ volatile ("sti" : : : "memory");
+    } else {
+        __asm__ volatile ("cli" : : : "memory");
+    }
     *exit_status = user_exit_status;
     *faulted = user_fault_occurred;
     return user_exit_occurred;

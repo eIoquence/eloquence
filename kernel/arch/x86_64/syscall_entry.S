@@ -70,6 +70,7 @@ x86_user_enter_asm:
     pushq %r15
     movq %rsp, x86_user_return_stack(%rip)
 
+    movq %r9, %r11
     movq %rdi, %r9
     movq %rsi, %r10
     movq %rdx, %rdi
@@ -78,7 +79,7 @@ x86_user_enter_asm:
 
     pushq $0x1b
     pushq %r10
-    pushq $0x002
+    pushq %r11
     pushq $0x23
     pushq %r9
     iretq
