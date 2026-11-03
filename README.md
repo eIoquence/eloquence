@@ -8,13 +8,13 @@ The initial research focus is a hardware resource lifecycle:
 
 `Discovery → Authorization → Allocation → Ownership → Revocation → Release`
 
-The first functional baseline targets x86-64 under QEMU. AArch64 and RV64 have Limine bootstrap sources and linked-ELF CI targets; MIPS32 has a compile-only interrupt primitive. The x86-64 monitor, PIT/APIC clock, EDU driver, ring-3 capability scenarios, VirtIO block driver, GPT discovery, FAT32 root access, and bounded static ELF launch now boot and run under QEMU. No other architecture has a repeatable boot observation. Scheduling, writable filesystem support, IOMMU isolation, and physical-hardware performance claims remain later work.
+The first functional baseline targets x86-64 under QEMU. AArch64 and RV64 have Limine bootstrap sources and linked-ELF CI targets; MIPS32 has a compile-only interrupt primitive. The x86-64 monitor, PIT/APIC clock, EDU driver, ring-3 capability scenarios, VirtIO block driver, GPT discovery, FAT32 root access, and bounded static ELF launch now boot and run under QEMU. A user process can write validated ASCII characters to the serial console through a scalar syscall; the fixture prints `Eloquence is alive!` and exits with status 42. No other architecture has a repeatable boot observation. Scheduling, writable filesystem support, IOMMU isolation, and physical-hardware performance claims remain later work.
 
 The project does not claim novelty for capability systems or exokernels in general. Research claims will be made only after comparison with prior systems and reproducible experiments.
 
 ## Current status
 
-Kernel bring-up is in progress. The x86-64 source includes Limine boot information, serial diagnostics, a bounded reclaiming page allocator, PCI inventory, a targeted QEMU EDU driver, an experimental ring-3 MMIO demo using kernel-owned domain identity and scalar syscalls, a polling VirtIO block driver, a primary GPT parser, read-only FAT32 root listing and short-name file access, and a bounded static ELF loader. The demo passes owner read/write, foreign-domain denial, read-only denial, revocation, stale and malformed handle rejection, invalid syscall handling, and user-fault termination. A 100 Hz PIT clock reaches IRQ0 through the local APIC virtual-wire path. The COM1 monitor accepts bounded diagnostic commands, including `disk list`, `gpt list`, `fs list`, `fs cat`, and `run`; the fixture ELF exits from ring 3 with status 42. There is no scheduler, writable filesystem, or general userland. Capability handles remain predictable slot/generation values, so the demo does not claim unforgeability. See:
+Kernel bring-up is in progress. The x86-64 source includes Limine boot information, serial diagnostics, a bounded reclaiming page allocator, PCI inventory, a targeted QEMU EDU driver, an experimental ring-3 MMIO demo using kernel-owned domain identity and scalar syscalls, a polling VirtIO block driver, a primary GPT parser, read-only FAT32 root listing and short-name file access, and a bounded static ELF loader. The demo passes owner read/write, foreign-domain denial, read-only denial, revocation, stale and malformed handle rejection, invalid syscall handling, and user-fault termination. A 100 Hz PIT clock reaches IRQ0 through the local APIC virtual-wire path. The COM1 monitor accepts bounded diagnostic commands, including `disk list`, `gpt list`, `fs list`, `fs cat`, and `run`; the fixture ELF writes a short line through a scalar console syscall and exits with status 42. There is no scheduler, writable filesystem, or general userland. Capability handles remain predictable slot/generation values, so the demo does not claim unforgeability. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [System Research Roadmap](docs/research/system-roadmap.md)
@@ -26,6 +26,7 @@ Kernel bring-up is in progress. The x86-64 source includes Limine boot informati
 - [Read-only GPT Discovery](docs/drivers/gpt.md)
 - [Read-only FAT32 Access](docs/drivers/fat32.md)
 - [Static x86-64 ELF Loader](docs/userland/static-elf-loader.md)
+- [Experimental x86-64 syscall ABI](docs/userland/syscall-abi.md)
 - [x86-64 Serial Monitor](docs/drivers/serial-monitor.md)
 - [Functional OS Path](docs/plans/2026-11-03-functional-os-path.md)
 - [QEMU Storage and FAT32 Run](docs/experiments/2026-11-03-qemu-storage-fs.md)

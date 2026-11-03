@@ -62,7 +62,10 @@ def put_u64(buffer: bytearray, offset: int, value: int) -> None:
 
 
 def make_hello_elf() -> bytes:
-    code = bytes.fromhex("48c7c00000000048c7c72a0000000f05")
+    code = bytes.fromhex(
+        "488d1d1f0000000fb63b85ff740cb8040000000f05"
+        "48ffc3ebedb800000000bf2a0000000f05"
+    ) + b"Eloquence is alive!\n\0"
     entry = 0x400000 + ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE
     header = struct.pack(
         "<16sHHIQQQIHHHHHH",

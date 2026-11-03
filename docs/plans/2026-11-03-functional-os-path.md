@@ -47,8 +47,12 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    **Partially implemented:** VirtIO legacy PCI block, primary GPT, FAT32 root
    listing, and bounded short-name file reads. Backup GPT recovery and all
    filesystem writes remain open.
-6. IPC and isolated device services, followed by network and multi-architecture
-   runtime work.
+6. Minimal user-facing console ABI.
+   **Partially implemented:** ring-3 programs can write validated ASCII one
+   character per syscall; the sample ELF prints a greeting. Console input,
+   buffering, a stable ABI, and a user-space command loop remain open.
+7. Scheduler and IPC, then isolated device services, network, and
+   multi-architecture runtime work.
 
 QEMU and related host tooling are introduced at milestone 2. Every milestone
 keeps compile, boot, and functional claims separate and records known limits.

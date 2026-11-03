@@ -18,7 +18,9 @@ The image reader is capped at 4 KiB, the process is single-threaded and
 synchronous, and the syscall ABI is still experimental. Address-space page
 tables remain allocated for reuse; loaded code and stack frames are unmapped and
 reclaimed after exit. There is no scheduler, dynamic linker, argument vector,
-user-space console API, or general-purpose process management yet.
+console input API, or general-purpose process management yet. A user program
+can emit individual validated ASCII characters through the experimental ABI.
 
-The QEMU disk fixture includes `HELLO.ELF`, which exits with status 42. See the
+The QEMU disk fixture includes `HELLO.ELF`, which prints a short greeting and
+exits with status 42. See the
 [ELF process run](../experiments/2026-11-03-qemu-elf-process.md).
