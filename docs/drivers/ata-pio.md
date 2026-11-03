@@ -5,7 +5,9 @@
 `kernel/drivers/ata/ata_pio.c` probes the legacy primary and secondary ATA
 channels and registers detected LBA-capable disks with the bounded block-device
 registry. Discovery issues `IDENTIFY DEVICE` only; it does not read or write
-disk sectors. No driver is automatically selected for PCI AHCI controllers.
+disk sectors. Kernel startup later reads the primary GPT through the block API;
+that scan is read-only and documented in [Read-only GPT Discovery](gpt.md).
+No driver is automatically selected for PCI AHCI controllers.
 
 The first implementation supports 512-byte sectors and LBA28, capped at
 2^28 sectors per device. Transfers use PIO with a finite status-poll limit,
@@ -16,7 +18,7 @@ remain in volatile device cache. Call `block_device_flush` to request a device
 flush; it returns failure when the command is unsupported or the device reports
 an error. No crash-recovery semantics are implemented.
 
-The implementation has no ATAPI, LBA48, AHCI, DMA, interrupt-driven operation,
-partition parser, filesystem, media-change handling, or retry/recovery policy.
-It is a minimal block-driver starting point, not a general storage stack. A
-booted device test is still required before relying on reads or writes.
+The driver has no ATAPI, LBA48, AHCI, DMA, interrupt-driven operation,
+filesystem, media-change handling, or retry/recovery policy. It is a minimal
+block-driver starting point, not a general storage stack. A booted device test
+is still required before relying on reads or writes.

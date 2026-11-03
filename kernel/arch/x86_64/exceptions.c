@@ -22,6 +22,9 @@ struct idt_register {
 
 static struct idt_gate idt[256] __attribute__((aligned(16)));
 
+extern void x86_irq0_stub(void);
+extern void x86_spurious_stub(void);
+
 #define DECLARE_EXCEPTION_STUB(vector) extern void x86_exception_stub_##vector(void)
 DECLARE_EXCEPTION_STUB(0);
 DECLARE_EXCEPTION_STUB(1);
@@ -122,6 +125,26 @@ void x86_exceptions_initialize(void) {
         gate->offset_high = (uint32_t)(handler >> 32);
         gate->reserved = 0;
     }
+
+    uint64_t timer_handler = (uint64_t)(uintptr_t)x86_irq0_stub;
+    struct idt_gate *timer_gate = &idt[32];
+    timer_gate->offset_low = (uint16_t)timer_handler;
+    timer_gate->selector = code_selector;
+    timer_gate->ist = 0;
+    timer_gate->attributes = 0x8e;
+    timer_gate->offset_middle = (uint16_t)(timer_handler >> 16);
+    timer_gate->offset_high = (uint32_t)(timer_handler >> 32);
+    timer_gate->reserved = 0;
+
+    uint64_t spurious_handler = (uint64_t)(uintptr_t)x86_spurious_stub;
+    struct idt_gate *spurious_gate = &idt[0xff];
+    spurious_gate->offset_low = (uint16_t)spurious_handler;
+    spurious_gate->selector = code_selector;
+    spurious_gate->ist = 0;
+    spurious_gate->attributes = 0x8e;
+    spurious_gate->offset_middle = (uint16_t)(spurious_handler >> 16);
+    spurious_gate->offset_high = (uint32_t)(spurious_handler >> 32);
+    spurious_gate->reserved = 0;
 
     struct idt_register idtr = {
         .limit = sizeof(idt) - 1,

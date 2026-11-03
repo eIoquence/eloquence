@@ -59,16 +59,16 @@ that can be claimed from an interface stub.
 
 | Area | Current state | Evidence required for the next claim |
 | --- | --- | --- |
-| x86-64 bootstrap | Limine path, serial diagnostics, page allocator, exceptions, PCI discovery, QEMU EDU driver, MMIO mapping, capability checks | Repeatable QEMU boot record; no performance claims from emulation |
-| User protection | x86-64 ring-3 MMIO demo, scalar syscall path, kernel-owned domain identity, and user-fault termination in source | Linked ELF plus an observed user/kernel isolation run; adversarial syscall and fault cases |
+| x86-64 bootstrap | Limine boot, serial diagnostics, page allocator, exceptions, PCI discovery, QEMU EDU driver, uncached MMIO mapping, polling COM1 monitor, 100 Hz PIT/PIC clock via local APIC virtual wire | [QEMU boot record](../experiments/2026-11-03-qemu-x86_64-first-boot.md); repeat on a clean checkout and add automated run coverage |
+| User protection | Ring-3 MMIO demo with scalar syscalls, kernel-owned domain identity, explicit page permissions, and user-fault termination | QEMU observed owner read/write, read-only denial, foreign-domain denial, stale-handle denial, and fault return; formal process lifecycle and adversarial coverage remain |
 | AArch64 | Limine bootstrap sources and separate ELF target | Compile/link, explicit QEMU `virt` CPU/firmware, repeatable boot; then DTB-driven PL011 and GIC |
 | RV64 | Limine bootstrap sources request Sv39 and report handoff via SBI | Compile/link with a RISC-V-capable toolchain, QEMU `virt` boot, DTB-derived devices and interrupt controller |
 | MIPS32 | Interrupt-state primitive and compile-only target | Separate Malta reset/firmware path, linker/entry code, UART diagnostics, exception and TLB contract |
 | FPGA | Research plan only; CVA6 is a candidate | Named board, RTL revision/configuration, firmware, RAM/peripherals, bitstream hash and reproducible boot |
 | DMA / IOMMU | Not implemented | Buffer ownership protocol and isolation tests on a named compatible platform |
 | Scheduler / IPC | Not implemented | Timer source, context-switch ABI, domain lifecycle, bounded message and capability transfer |
-| Storage / network | Block-device API and legacy ATA PIO driver source; no filesystem or network stack | VirtIO-QEMU functional baseline, partitions/filesystem, network protocols, failure handling and reproducible workload records |
-| SDK / userland | Not implemented beyond the current ring-3 experiment | Stable syscall/API contract, libraries, linker/toolchain, shell and host-side development tools |
+| Storage / network | Block-device API, legacy ATA PIO, polling VirtIO legacy PCI block driver, primary GPT parser, and read-only FAT32 root listing/short-name reads; [QEMU storage run](../experiments/2026-11-03-qemu-storage-fs.md) | Backup GPT recovery, FAT32 writes and subdirectories, modern VirtIO transport, network protocols, and reproducible workload records |
+| SDK / userland | Kernel-resident serial monitor supports hardware, memory, interrupt, disk, GPT, FAT32, and bounded static ELF launch; no general user-space utilities | Scheduler, stable syscall/API contract, libraries, linker/toolchain, process shell and host-side development tools |
 
 Build success, boot success, functional support, and measured performance are
 separate maturity levels. A CI artifact is a build result, not proof that a
@@ -193,8 +193,12 @@ bring-up. Packet parsing requires bounded lengths and fuzzable parsers.
 
 ### Userland and development ecosystem
 
-The first native tools are diagnostics (`hwinfo`, `top`, `net status`,
-`disk list`, `services list`, and `log --follow`) backed by documented kernel
+The kernel-resident monitor currently provides `help`, `hwinfo`, `mem`,
+`uptime`, `irq status`, `disk list`, `gpt list [device]`, and `halt` as
+diagnostics. It polls COM1 and uses the PIT only as a clock; it is not a
+scheduler. The first
+native tools should grow into `hwinfo`, `top`, `net status`, `disk list`,
+`services list`, and `log --follow`, backed by documented user-facing kernel
 interfaces. Candidate components include `libeloq`, `eloqsh`, `eloqdbg`,
 `eloqmon`, `eloqfs`, `eloqnet`, `eloqtest`, and `eloqbuild`; names are proposals
 until their APIs and packages exist.

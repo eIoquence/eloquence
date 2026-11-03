@@ -30,5 +30,7 @@ bool x86_address_space_unmap_page(struct x86_address_space *space,
 bool x86_address_space_page_matches(struct x86_address_space *space,
                                     uint64_t virtual_address,
                                     uint64_t physical_address);
+bool x86_virtual_to_physical(uint64_t virtual_address,
+                             uint64_t *physical_address);
 
 #endif

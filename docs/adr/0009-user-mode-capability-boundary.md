@@ -46,19 +46,19 @@ protect device access.
 - The page allocator cannot free frames or page-table pages. User address-space
   teardown and resource reclamation remain incomplete.
 - User exceptions return to the kernel continuation and terminate the current
-  demo domain. This path has only compile-time review so far; nested faults,
-  NMI, machine-check, and corrupted kernel state are not isolated or recovered.
-- The implementation must compile and link before it is considered buildable;
-  a repeatable boot observation is still required before claiming runtime
-  behavior.
+  demo domain. The EDU invalid-opcode isolation scenario now passes under QEMU;
+  nested faults, NMI, machine-check, and corrupted kernel state are not isolated
+  or recovered.
+- The ring-3 capability scenarios have a QEMU runtime observation. This does
+  not prove general process isolation or physical-hardware behavior.
 
-## Verification gate
+## QEMU verification observed
 
-The next runtime experiment must show that the read-only device capability
-works for its owner, fails for another ring-3 domain, rejects writes, stops
-working after revoke, and produces an audit trail. It must also demonstrate
-that attempts to execute kernel code or read/write kernel mappings fault in
-user mode. Build-only CI does not satisfy this gate.
+The QEMU run showed owner reads/writes, foreign-domain denial, read-only write
+denial, revocation, stale-handle denial, and an audit trail. The deliberate
+`ud2` fault returned to the kernel continuation. Attempts to execute kernel
+code or read/write kernel mappings were not part of this run. Build-only CI does
+not establish those runtime properties.
 
 ## References
 

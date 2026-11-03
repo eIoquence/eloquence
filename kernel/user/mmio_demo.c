@@ -9,6 +9,7 @@
 #include "domain/domain.h"
 #include "memory/page_allocator.h"
 #include "mmio.h"
+#include "serial.h"
 #include "user/mmio_demo.h"
 
 #define PAGE_SIZE 4096ULL
@@ -56,15 +57,18 @@ static bool create_user_mapping(struct x86_address_space *space,
     *stack_frame_out = (struct page_frame){0};
     if (code_size == 0 || code_size > PAGE_SIZE
         || !page_allocator_allocate(&code_frame)) {
+        serial_write("  EDU user-domain setup failed: code-page allocation\n");
         return false;
     }
     *code_frame_out = code_frame;
     if (!page_allocator_allocate(&stack_frame)) {
+        serial_write("  EDU user-domain setup failed: stack-page allocation\n");
         return false;
     }
     *stack_frame_out = stack_frame;
 
     if (!x86_address_space_create_user(space)) {
+        serial_write("  EDU user-domain setup failed: address-space creation\n");
         return false;
     }
 
@@ -78,6 +82,7 @@ static bool create_user_mapping(struct x86_address_space *space,
         || !x86_address_space_map_page(space, USER_MMIO_STACK_ADDRESS,
                                       stack_frame.physical_address,
                                       X86_PAGE_USER | X86_PAGE_WRITABLE)) {
+        serial_write("  EDU user-domain setup failed: code/stack mapping\n");
         return false;
     }
 
@@ -146,6 +151,7 @@ bool user_mmio_demo_execute(const struct pci_bar_info *bar, uint64_t size,
                              &owner_stack_frame)
         || !create_user_mapping(&foreign_space, &foreign_code_frame,
                                 &foreign_stack_frame)) {
+        serial_write("  EDU user-domain setup failed: isolated mappings\n");
         goto cleanup;
     }
 
@@ -156,6 +162,7 @@ bool user_mmio_demo_execute(const struct pci_bar_info *bar, uint64_t size,
         DEMO_DOMAIN_ID, pack_handle(handle), DEMO_MODE_OWNER_READ_WRITE, 0,
         &read_write_failures, &read_write_faulted);
     if (!read_write_ran) {
+        serial_write("  EDU user-domain run failed: owner context did not exit\n");
         goto cleanup;
     }
     if (read_write_faulted) {

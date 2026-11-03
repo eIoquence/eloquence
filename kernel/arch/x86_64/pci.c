@@ -312,3 +312,27 @@ bool pci_probe_bar_size(const struct pci_device_info *device,
     *size = probed_size;
     return true;
 }
+
+bool pci_enable_io_bus_master(const struct pci_device_info *device) {
+    if (device == 0) {
+        return false;
+    }
+
+    uint32_t vendor_device = pci_read_config(device->bus, device->device,
+                                              device->function,
+                                              PCI_VENDOR_DEVICE);
+    if (!pci_device_present(vendor_device)
+        || (uint16_t)vendor_device != device->vendor_id
+        || (uint16_t)(vendor_device >> 16) != device->device_id) {
+        return false;
+    }
+
+    uint16_t command = pci_read_config_word(device->bus, device->device,
+                                            device->function, PCI_COMMAND);
+    command |= 0x0005U;
+    pci_write_config_word(device->bus, device->device, device->function,
+                          PCI_COMMAND, command);
+    uint16_t updated = pci_read_config_word(device->bus, device->device,
+                                            device->function, PCI_COMMAND);
+    return (updated & 0x0005U) == 0x0005U;
+}

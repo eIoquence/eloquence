@@ -10,12 +10,19 @@
 #include "capability/mmio_capability.h"
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
+#include "drivers/virtio/virtio_blk.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
+#include "monitor/serial_shell.h"
 #include "paging.h"
+#include "io.h"
 #include "serial.h"
+#include "timer.h"
 #include "storage/block_device.h"
+#include "storage/gpt.h"
+#include "storage/fat32.h"
 #include "user/mmio_demo.h"
+#include "user/elf_loader.h"
 #include "user_mode.h"
 
 __attribute__((used, section(".limine_requests")))
@@ -45,6 +52,10 @@ struct limine_page_allocator_context {
 };
 
 static struct limine_page_allocator_context page_allocator_context;
+static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
+static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
+static uint8_t fat32_file_buffer[4096];
+static uint64_t pci_functions_found;
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
@@ -349,6 +360,11 @@ static void report_pci_device(const struct pci_device_info *device,
     if (device->vendor_id == 0x1234 && device->device_id == 0x11e8) {
         initialize_edu_driver(device, *mmio_available);
     }
+    if (device->vendor_id == 0x1af4 && device->device_id == 0x1001) {
+        serial_write(virtio_blk_initialize(device)
+                     ? "  VirtIO legacy block driver initialized\n"
+                     : "  VirtIO legacy block driver probe failed\n");
+    }
 }
 
 static void report_pci_devices(void) {
@@ -359,16 +375,58 @@ static void report_pci_devices(void) {
     }
 
     uint64_t found = pci_enumerate(report_pci_device, &mmio_available);
+    pci_functions_found = found;
 
     serial_write("PCI functions discovered: ");
     serial_write_decimal(found);
     serial_write("\n");
 }
 
+static const char *gpt_scan_result_name(enum gpt_scan_result result) {
+    switch (result) {
+        case GPT_SCAN_NOT_PRESENT: return "not present";
+        case GPT_SCAN_IO_ERROR: return "read error";
+        case GPT_SCAN_INVALID: return "invalid";
+        case GPT_SCAN_LIMIT_EXCEEDED: return "limit exceeded";
+        case GPT_SCAN_OK: return "ok";
+        default: return "unknown";
+    }
+}
+
+static void report_gpt_device(uint64_t device_index, const char *indent) {
+    uint32_t partition_count = 0;
+    enum gpt_scan_result result = gpt_scan_device(
+        device_index, discovered_partitions, GPT_MAX_PARTITIONS,
+        &partition_count);
+
+    if (result != GPT_SCAN_OK) {
+        serial_write(indent);
+        serial_write("primary GPT: ");
+        serial_write(gpt_scan_result_name(result));
+        serial_write("\n");
+        return;
+    }
+
+    serial_write(indent);
+    serial_write("primary GPT partitions: ");
+    serial_write_decimal(partition_count);
+    serial_write("\n");
+    for (uint32_t partition = 0; partition < partition_count; partition++) {
+        const struct gpt_partition *entry = &discovered_partitions[partition];
+        serial_write(indent);
+        serial_write("  entry=");
+        serial_write_decimal(entry->entry_number);
+        serial_write(" first-lba=");
+        serial_write_decimal(entry->first_lba);
+        serial_write(" last-lba=");
+        serial_write_decimal(entry->last_lba);
+        serial_write("\n");
+    }
+}
+
 static void report_block_devices(void) {
     if (!ata_pio_initialize()) {
         serial_write("Legacy ATA PIO probe unavailable\n");
-        return;
     }
 
     serial_write("Block devices discovered: ");
@@ -388,7 +446,475 @@ static void report_block_devices(void) {
         serial_write(" sector-size=");
         serial_write_decimal(device->sector_size);
         serial_write("\n");
+
+        report_gpt_device(i, "    ");
     }
+}
+
+static bool text_equals(const char *left, const char *right) {
+    while (*left != '\0' && *left == *right) {
+        left++;
+        right++;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static bool command_has_prefix(const char *command, const char *prefix) {
+    while (*prefix != '\0' && *command == *prefix) {
+        command++;
+        prefix++;
+    }
+    return *prefix == '\0' && (*command == '\0' || *command == ' ');
+}
+
+static const char *skip_spaces(const char *text) {
+    while (*text == ' ') {
+        text++;
+    }
+    return text;
+}
+
+static bool parse_device_index(const char *text, uint64_t *device_index) {
+    uint64_t value = 0;
+
+    if (*text < '0' || *text > '9') {
+        return false;
+    }
+    while (*text >= '0' && *text <= '9') {
+        uint64_t digit = (uint64_t)(*text - '0');
+        if (value > (UINT64_MAX - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        text++;
+    }
+    if (*skip_spaces(text) != '\0') {
+        return false;
+    }
+
+    *device_index = value;
+    return true;
+}
+
+static bool parse_number_argument(const char **text, uint64_t *value) {
+    const char *cursor = skip_spaces(*text);
+    uint64_t parsed = 0;
+
+    if (*cursor < '0' || *cursor > '9') {
+        return false;
+    }
+    while (*cursor >= '0' && *cursor <= '9') {
+        uint64_t digit = (uint64_t)(*cursor - '0');
+        if (parsed > (UINT64_MAX - digit) / 10) {
+            return false;
+        }
+        parsed = parsed * 10 + digit;
+        cursor++;
+    }
+    *text = cursor;
+    *value = parsed;
+    return true;
+}
+
+static const char *fat32_result_name(enum fat32_result result) {
+    switch (result) {
+        case FAT32_OK: return "ok";
+        case FAT32_NOT_FAT32: return "not FAT32";
+        case FAT32_IO_ERROR: return "read error";
+        case FAT32_INVALID: return "invalid volume or data";
+        case FAT32_LIMIT_EXCEEDED: return "size limit exceeded";
+        case FAT32_NOT_FOUND: return "file not found";
+        default: return "unknown error";
+    }
+}
+
+static bool find_gpt_partition(uint64_t device_index,
+                               uint64_t partition_number,
+                               struct gpt_partition *partition) {
+    uint32_t count = 0;
+    enum gpt_scan_result result = gpt_scan_device(
+        device_index, discovered_partitions, GPT_MAX_PARTITIONS, &count);
+
+    if (result != GPT_SCAN_OK) {
+        serial_write("GPT scan failed: ");
+        serial_write(gpt_scan_result_name(result));
+        serial_write("\n");
+        return false;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        if (discovered_partitions[i].entry_number == partition_number) {
+            *partition = discovered_partitions[i];
+            return true;
+        }
+    }
+    serial_write("GPT partition number was not found.\n");
+    return false;
+}
+
+static bool mount_fat32(uint64_t device_index, uint64_t partition_number,
+                        struct fat32_volume *volume) {
+    struct gpt_partition partition;
+
+    if (!find_gpt_partition(device_index, partition_number, &partition)) {
+        return false;
+    }
+    enum fat32_result result = fat32_mount(device_index, &partition, volume);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 mount failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return false;
+    }
+    return true;
+}
+
+static bool parse_filesystem_target(const char *arguments,
+                                    uint64_t *device_index,
+                                    uint64_t *partition_number,
+                                    const char **remaining) {
+    const char *cursor = arguments;
+
+    if (!parse_number_argument(&cursor, device_index)
+        || !parse_number_argument(&cursor, partition_number)) {
+        return false;
+    }
+    *remaining = skip_spaces(cursor);
+    return true;
+}
+
+static void report_fat32_root(uint64_t device_index,
+                              uint64_t partition_number) {
+    struct fat32_volume volume;
+    uint32_t entry_count = 0;
+
+    if (!mount_fat32(device_index, partition_number, &volume)) {
+        return;
+    }
+    enum fat32_result result = fat32_list_root(
+        &volume, fat32_entries, FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 directory read failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return;
+    }
+    serial_write("FAT32 root directory:\n");
+    for (uint32_t i = 0; i < entry_count; i++) {
+        serial_write("  ");
+        serial_write(fat32_entries[i].short_name);
+        if ((fat32_entries[i].attributes & 0x10U) != 0) {
+            serial_write(" [directory]");
+        } else {
+            serial_write("  ");
+            serial_write_decimal(fat32_entries[i].size);
+            serial_write(" bytes");
+        }
+        serial_write("\n");
+    }
+}
+
+static bool read_fat32_file(uint64_t device_index,
+                            uint64_t partition_number,
+                            const char *short_name, uint32_t *bytes_read) {
+    struct fat32_volume volume;
+
+    if (bytes_read == 0
+        || !mount_fat32(device_index, partition_number, &volume)) {
+        return false;
+    }
+    enum fat32_result result = fat32_read_root_file(
+        &volume, short_name, fat32_file_buffer, sizeof(fat32_file_buffer),
+        bytes_read);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 file read failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return false;
+    }
+    return true;
+}
+
+static void report_fat32_file(uint64_t device_index,
+                              uint64_t partition_number,
+                              const char *short_name) {
+    uint32_t bytes_read = 0;
+
+    if (!read_fat32_file(device_index, partition_number, short_name,
+                         &bytes_read)) {
+        return;
+    }
+
+    serial_write("Contents of ");
+    serial_write(short_name);
+    serial_write(":\n");
+    for (uint32_t i = 0; i < bytes_read; i++) {
+        char character = (char)fat32_file_buffer[i];
+        if (character == '\r') {
+            continue;
+        }
+        if (character == '\n') {
+            serial_write("\n");
+        } else if (character == '\t') {
+            serial_write("\t");
+        } else {
+            char text[2] = {
+                character >= 32 && character <= 126 ? character : '?',
+                '\0'
+            };
+            serial_write(text);
+        }
+    }
+    if (bytes_read == 0 || fat32_file_buffer[bytes_read - 1] != '\n') {
+        serial_write("\n");
+    }
+}
+
+static void run_fat32_elf(uint64_t device_index,
+                          uint64_t partition_number,
+                          const char *short_name) {
+    uint32_t image_size = 0;
+    uint64_t exit_status = 0;
+    bool faulted = false;
+
+    if (!read_fat32_file(device_index, partition_number, short_name,
+                         &image_size)) {
+        return;
+    }
+    if (!x86_user_elf_run(fat32_file_buffer, image_size,
+                          &exit_status, &faulted)) {
+        serial_write("ELF image rejected or process setup failed.\n");
+        return;
+    }
+    if (faulted) {
+        serial_write("Process terminated after CPU exception vector ");
+        serial_write_decimal(exit_status);
+        serial_write(".\n");
+        return;
+    }
+    serial_write("Process exited with status ");
+    serial_write_decimal(exit_status);
+    serial_write(".\n");
+}
+
+static bool parse_short_name(const char *text, char *name, size_t capacity) {
+    size_t length = 0;
+
+    if (text == 0 || name == 0 || capacity < 2) {
+        return false;
+    }
+    while (text[length] != '\0' && text[length] != ' '
+           && length + 1 < capacity) {
+        name[length] = text[length];
+        length++;
+    }
+    name[length] = '\0';
+    return length != 0 && text[length] == '\0';
+}
+
+static void report_system_info(void) {
+    serial_write("Architecture: x86_64\n");
+    serial_write("Bootloader: ");
+    if (bootloader_request.response == 0
+        || bootloader_request.response->name == 0
+        || bootloader_request.response->version == 0) {
+        serial_write("unavailable\n");
+    } else {
+        serial_write(bootloader_request.response->name);
+        serial_write(" ");
+        serial_write(bootloader_request.response->version);
+        serial_write("\n");
+    }
+    serial_write("PCI functions: ");
+    serial_write_decimal(pci_functions_found);
+    serial_write("\nBlock devices: ");
+    serial_write_decimal(block_device_count());
+    serial_write("\nInteractive monitor: polling COM1\n");
+}
+
+static void report_disk_list(void) {
+    uint64_t device_count = block_device_count();
+
+    serial_write("Block devices: ");
+    serial_write_decimal(device_count);
+    serial_write("\n");
+    for (uint64_t i = 0; i < device_count; i++) {
+        const struct block_device *device = block_device_get(i);
+        if (device == 0) {
+            continue;
+        }
+        serial_write("  [");
+        serial_write_decimal(i);
+        serial_write("] ");
+        serial_write(device->name);
+        serial_write(" model=");
+        serial_write(device->model);
+        serial_write(" sectors=");
+        serial_write_decimal(device->sector_count);
+        serial_write(" sector-size=");
+        serial_write_decimal(device->sector_size);
+        serial_write(device->read_only ? " read-only\n" : " read-write\n");
+    }
+}
+
+static void report_gpt_list(bool all_devices, uint64_t device_index) {
+    uint64_t device_count = block_device_count();
+
+    if (all_devices) {
+        if (device_count == 0) {
+            serial_write("No block devices are registered.\n");
+            return;
+        }
+        for (uint64_t i = 0; i < device_count; i++) {
+            const struct block_device *device = block_device_get(i);
+            if (device == 0) {
+                continue;
+            }
+            serial_write("Device [");
+            serial_write_decimal(i);
+            serial_write("] ");
+            serial_write(device->name);
+            serial_write(":\n");
+            report_gpt_device(i, "  ");
+        }
+        return;
+    }
+
+    if (device_index >= device_count) {
+        serial_write("Block device index is out of range.\n");
+        return;
+    }
+    report_gpt_device(device_index, "");
+}
+
+static void handle_monitor_command(const char *line, void *context) {
+    (void)context;
+    if (*line == '\0') {
+        return;
+    }
+    if (text_equals(line, "help")) {
+        serial_write("Commands:\n");
+        serial_write("  help              show this list\n");
+        serial_write("  hwinfo            show boot and device summary\n");
+        serial_write("  mem               show the boot memory map\n");
+        serial_write("  uptime            show time since timer start\n");
+        serial_write("  irq status        show interrupt-controller state\n");
+        serial_write("  disk list         list registered block devices\n");
+        serial_write("  gpt list [index]  list primary GPT partitions\n");
+        serial_write("  fs list DEV PART  list a FAT32 root directory\n");
+        serial_write("  fs cat DEV PART NAME  print a short-name text file\n");
+        serial_write("  run DEV PART NAME  launch a static x86-64 ELF in ring 3\n");
+        serial_write("  halt              halt the CPU\n");
+        return;
+    }
+    if (text_equals(line, "hwinfo")) {
+        report_system_info();
+        return;
+    }
+    if (text_equals(line, "mem")) {
+        report_memory_map();
+        return;
+    }
+    if (text_equals(line, "uptime")) {
+        uint64_t ticks = x86_timer_ticks();
+        serial_write("Uptime: ");
+        serial_write_decimal(ticks / X86_TIMER_FREQUENCY_HZ);
+        serial_write(" seconds (");
+        serial_write_decimal(ticks);
+        serial_write(" timer ticks)\n");
+        return;
+    }
+    if (text_equals(line, "irq status")) {
+        arch_irq_state_t irq_state = arch_irq_save();
+        x86_outb(0x20, 0x0a);
+        uint8_t pending = x86_inb(0x20);
+        x86_outb(0x20, 0x0b);
+        uint8_t in_service = x86_inb(0x20);
+        uint8_t mask = x86_inb(0x21);
+        arch_irq_restore(irq_state);
+        serial_write("CPU IF: ");
+        serial_write((irq_state & (1ULL << 9)) != 0
+                     ? "enabled\n" : "disabled\n");
+        serial_write("PIC master mask: 0x");
+        serial_write_hex(mask);
+        serial_write(" IRR: 0x");
+        serial_write_hex(pending);
+        serial_write(" ISR: 0x");
+        serial_write_hex(in_service);
+        serial_write("\nTimer ticks: ");
+        serial_write_decimal(x86_timer_ticks());
+        serial_write("\nLocal APIC: ");
+        serial_write(x86_timer_uses_local_apic() ? "enabled\n" : "unavailable\n");
+        serial_write("\n");
+        return;
+    }
+    if (text_equals(line, "disk list")) {
+        report_disk_list();
+        return;
+    }
+    if (command_has_prefix(line, "gpt list")) {
+        const char *argument = skip_spaces(line + 8);
+        if (*argument == '\0') {
+            report_gpt_list(true, 0);
+            return;
+        }
+        uint64_t device_index;
+        if (!parse_device_index(argument, &device_index)) {
+            serial_write("Usage: gpt list [device-index]\n");
+            return;
+        }
+        report_gpt_list(false, device_index);
+        return;
+    }
+    if (command_has_prefix(line, "fs list")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        if (!parse_filesystem_target(skip_spaces(line + 7), &device_index,
+                                     &partition_number, &remaining)
+            || *remaining != '\0') {
+            serial_write("Usage: fs list device-index gpt-partition-number\n");
+            return;
+        }
+        report_fat32_root(device_index, partition_number);
+        return;
+    }
+    if (command_has_prefix(line, "fs cat")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        char short_name[FAT32_SHORT_NAME_LENGTH];
+        if (!parse_filesystem_target(skip_spaces(line + 6), &device_index,
+                                     &partition_number, &remaining)) {
+            serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
+            return;
+        }
+        if (!parse_short_name(remaining, short_name, sizeof(short_name))) {
+            serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
+            return;
+        }
+        report_fat32_file(device_index, partition_number, short_name);
+        return;
+    }
+    if (command_has_prefix(line, "run")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        char short_name[FAT32_SHORT_NAME_LENGTH];
+        if (!parse_filesystem_target(skip_spaces(line + 3), &device_index,
+                                     &partition_number, &remaining)
+            || !parse_short_name(remaining, short_name,
+                                 sizeof(short_name))) {
+            serial_write("Usage: run device-index gpt-partition-number 8.3-elf-name\n");
+            return;
+        }
+        run_fat32_elf(device_index, partition_number, short_name);
+        return;
+    }
+    if (text_equals(line, "halt")) {
+        arch_cpu_halt();
+    }
+
+    serial_write("Unknown command. Type 'help'.\n");
 }
 
 void kmain(void) {
@@ -424,6 +950,10 @@ void kmain(void) {
     }
     report_pci_devices();
     report_block_devices();
-    serial_write("Boot information report complete; kernel halted.\n");
-    arch_cpu_halt();
+    if (!x86_timer_initialize()) {
+        serial_write("Warning: local APIC setup failed; timer IRQ delivery may be unavailable\n");
+    }
+    serial_write("Boot information report complete.\n");
+    __asm__ volatile ("sti" : : : "memory");
+    serial_shell_run(handle_monitor_command, 0);
 }

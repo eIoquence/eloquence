@@ -42,5 +42,6 @@ typedef void (*pci_device_callback)(const struct pci_device_info *device,
 uint64_t pci_enumerate(pci_device_callback callback, void *context);
 bool pci_probe_bar_size(const struct pci_device_info *device,
                         const struct pci_bar_info *bar, uint64_t *size);
+bool pci_enable_io_bus_master(const struct pci_device_info *device);
 
 #endif
