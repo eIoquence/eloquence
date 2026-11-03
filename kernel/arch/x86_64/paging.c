@@ -290,3 +290,46 @@ bool x86_address_space_page_matches(struct x86_address_space *space,
         && (*entry & PAGE_PRESENT) != 0
         && (*entry & PAGE_ADDRESS_MASK) == physical_address;
 }
+
+bool x86_virtual_to_physical(uint64_t virtual_address,
+                             uint64_t *physical_address) {
+    static const uint8_t shifts[] = {39, 30, 21, 12};
+    struct x86_address_space current;
+    uint64_t *table;
+
+    if (!paging_initialized || physical_address == 0
+        || !address_is_canonical(virtual_address)
+        || !x86_address_space_current(&current)) {
+        return false;
+    }
+
+    table = current.root_virtual_address;
+    for (uint8_t level = 0; level < sizeof(shifts); level++) {
+        uint64_t index = (virtual_address >> shifts[level]) & 0x1ff;
+        uint64_t entry = table[index];
+
+        if ((entry & PAGE_PRESENT) == 0) {
+            return false;
+        }
+        if ((level == 1 || level == 2) && (entry & PAGE_LARGE) != 0) {
+            uint64_t page_size = 1ULL << shifts[level];
+            uint64_t page_base = entry & PAGE_ADDRESS_MASK
+                & ~(page_size - 1);
+            *physical_address = page_base
+                | (virtual_address & (page_size - 1));
+            return true;
+        }
+        if (level == 3) {
+            *physical_address = (entry & PAGE_ADDRESS_MASK)
+                | (virtual_address & PAGE_MASK);
+            return true;
+        }
+
+        table = physical_to_hhdm(entry & PAGE_ADDRESS_MASK);
+        if (table == 0) {
+            return false;
+        }
+    }
+
+    return false;
+}

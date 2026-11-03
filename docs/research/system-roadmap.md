@@ -67,8 +67,8 @@ that can be claimed from an interface stub.
 | FPGA | Research plan only; CVA6 is a candidate | Named board, RTL revision/configuration, firmware, RAM/peripherals, bitstream hash and reproducible boot |
 | DMA / IOMMU | Not implemented | Buffer ownership protocol and isolation tests on a named compatible platform |
 | Scheduler / IPC | Not implemented | Timer source, context-switch ABI, domain lifecycle, bounded message and capability transfer |
-| Storage / network | Block-device API, legacy ATA PIO source, and bounded read-only primary GPT parser; no filesystem or network stack | Host-side GPT fixtures, VirtIO-QEMU functional baseline, backup GPT recovery, filesystem, network protocols, and reproducible workload records |
-| SDK / userland | Kernel-resident serial monitor only; no user-space utilities | User-process lifecycle, stable syscall/API contract, libraries, linker/toolchain, shell and host-side development tools |
+| Storage / network | Block-device API, legacy ATA PIO, polling VirtIO legacy PCI block driver, primary GPT parser, and read-only FAT32 root listing/short-name reads; [QEMU storage run](../experiments/2026-11-03-qemu-storage-fs.md) | Backup GPT recovery, FAT32 writes and subdirectories, modern VirtIO transport, network protocols, and reproducible workload records |
+| SDK / userland | Kernel-resident serial monitor supports hardware, memory, interrupt, disk, GPT, and limited FAT32 commands; no user-space utilities | User-process lifecycle, stable syscall/API contract, libraries, linker/toolchain, process shell and host-side development tools |
 
 Build success, boot success, functional support, and measured performance are
 separate maturity levels. A CI artifact is a build result, not proof that a

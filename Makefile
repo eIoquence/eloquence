@@ -6,6 +6,8 @@ TARGET_CC ?= clang
 TARGET_LD ?= ld.lld
 HOST_CC ?= cc
 QEMU ?= qemu-system-x86_64
+QEMU_DISK ?= build/eloquence-qemu.raw
+PYTHON ?= python3
 TARGET_ASFLAGS ?= --target=x86_64-unknown-none-elf -ffreestanding \
 	-fno-pic -fno-pie -m64 -mno-red-zone -mcmodel=kernel
 
@@ -66,9 +68,10 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/timer.o build/arch/x86_64/timer_irq.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
 	build/lib/memory.o build/memory/page_allocator.o \
-	build/storage/block_device.o build/storage/gpt.o \
+	build/storage/block_device.o build/storage/gpt.o build/storage/fat32.o \
 	build/monitor/serial_shell.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
+	build/drivers/virtio/virtio_blk.o \
 	build/user/mmio_demo.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \
 	build/aarch64/arch/aarch64/console.o build/aarch64/arch/aarch64/irq.o
@@ -81,7 +84,7 @@ MIPS32_OBJECTS := build/mips32/arch/mips32/irq.o
 -include $(RISCV64_OBJECTS:.o=.d)
 -include $(MIPS32_OBJECTS:.o=.d)
 
-.PHONY: all iso run x86_64-objects aarch64-objects aarch64-elf riscv64-objects \
+.PHONY: all iso run qemu-disk x86_64-objects aarch64-objects aarch64-elf riscv64-objects \
 	riscv64-elf mips32-objects clean
 
 all: iso
@@ -178,9 +181,17 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-run: build/eloquence.iso
+qemu-disk:
+	@if [ ! -f "$(QEMU_DISK)" ]; then \
+		$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)"; \
+	fi
+
+run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \
-		-device edu -serial stdio -monitor none -no-reboot -no-shutdown
+		-device edu \
+		-drive if=none,file=$(QEMU_DISK),format=raw,id=vd0 \
+		-device virtio-blk-pci,drive=vd0,disable-modern=on \
+		-serial stdio -monitor none -no-reboot -no-shutdown
 
 clean:
 	rm -rf build

@@ -10,6 +10,7 @@
 #include "capability/mmio_capability.h"
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
+#include "drivers/virtio/virtio_blk.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
@@ -19,6 +20,7 @@
 #include "timer.h"
 #include "storage/block_device.h"
 #include "storage/gpt.h"
+#include "storage/fat32.h"
 #include "user/mmio_demo.h"
 #include "user_mode.h"
 
@@ -50,6 +52,8 @@ struct limine_page_allocator_context {
 
 static struct limine_page_allocator_context page_allocator_context;
 static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
+static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
+static uint8_t fat32_file_buffer[4096];
 static uint64_t pci_functions_found;
 
 __attribute__((used, section(".limine_requests")))
@@ -355,6 +359,11 @@ static void report_pci_device(const struct pci_device_info *device,
     if (device->vendor_id == 0x1234 && device->device_id == 0x11e8) {
         initialize_edu_driver(device, *mmio_available);
     }
+    if (device->vendor_id == 0x1af4 && device->device_id == 0x1001) {
+        serial_write(virtio_blk_initialize(device)
+                     ? "  VirtIO legacy block driver initialized\n"
+                     : "  VirtIO legacy block driver probe failed\n");
+    }
 }
 
 static void report_pci_devices(void) {
@@ -417,7 +426,6 @@ static void report_gpt_device(uint64_t device_index, const char *indent) {
 static void report_block_devices(void) {
     if (!ata_pio_initialize()) {
         serial_write("Legacy ATA PIO probe unavailable\n");
-        return;
     }
 
     serial_write("Block devices discovered: ");
@@ -485,6 +493,167 @@ static bool parse_device_index(const char *text, uint64_t *device_index) {
 
     *device_index = value;
     return true;
+}
+
+static bool parse_number_argument(const char **text, uint64_t *value) {
+    const char *cursor = skip_spaces(*text);
+    uint64_t parsed = 0;
+
+    if (*cursor < '0' || *cursor > '9') {
+        return false;
+    }
+    while (*cursor >= '0' && *cursor <= '9') {
+        uint64_t digit = (uint64_t)(*cursor - '0');
+        if (parsed > (UINT64_MAX - digit) / 10) {
+            return false;
+        }
+        parsed = parsed * 10 + digit;
+        cursor++;
+    }
+    *text = cursor;
+    *value = parsed;
+    return true;
+}
+
+static const char *fat32_result_name(enum fat32_result result) {
+    switch (result) {
+        case FAT32_OK: return "ok";
+        case FAT32_NOT_FAT32: return "not FAT32";
+        case FAT32_IO_ERROR: return "read error";
+        case FAT32_INVALID: return "invalid volume or data";
+        case FAT32_LIMIT_EXCEEDED: return "size limit exceeded";
+        case FAT32_NOT_FOUND: return "file not found";
+        default: return "unknown error";
+    }
+}
+
+static bool find_gpt_partition(uint64_t device_index,
+                               uint64_t partition_number,
+                               struct gpt_partition *partition) {
+    uint32_t count = 0;
+    enum gpt_scan_result result = gpt_scan_device(
+        device_index, discovered_partitions, GPT_MAX_PARTITIONS, &count);
+
+    if (result != GPT_SCAN_OK) {
+        serial_write("GPT scan failed: ");
+        serial_write(gpt_scan_result_name(result));
+        serial_write("\n");
+        return false;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        if (discovered_partitions[i].entry_number == partition_number) {
+            *partition = discovered_partitions[i];
+            return true;
+        }
+    }
+    serial_write("GPT partition number was not found.\n");
+    return false;
+}
+
+static bool mount_fat32(uint64_t device_index, uint64_t partition_number,
+                        struct fat32_volume *volume) {
+    struct gpt_partition partition;
+
+    if (!find_gpt_partition(device_index, partition_number, &partition)) {
+        return false;
+    }
+    enum fat32_result result = fat32_mount(device_index, &partition, volume);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 mount failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return false;
+    }
+    return true;
+}
+
+static bool parse_filesystem_target(const char *arguments,
+                                    uint64_t *device_index,
+                                    uint64_t *partition_number,
+                                    const char **remaining) {
+    const char *cursor = arguments;
+
+    if (!parse_number_argument(&cursor, device_index)
+        || !parse_number_argument(&cursor, partition_number)) {
+        return false;
+    }
+    *remaining = skip_spaces(cursor);
+    return true;
+}
+
+static void report_fat32_root(uint64_t device_index,
+                              uint64_t partition_number) {
+    struct fat32_volume volume;
+    uint32_t entry_count = 0;
+
+    if (!mount_fat32(device_index, partition_number, &volume)) {
+        return;
+    }
+    enum fat32_result result = fat32_list_root(
+        &volume, fat32_entries, FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 directory read failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return;
+    }
+    serial_write("FAT32 root directory:\n");
+    for (uint32_t i = 0; i < entry_count; i++) {
+        serial_write("  ");
+        serial_write(fat32_entries[i].short_name);
+        if ((fat32_entries[i].attributes & 0x10U) != 0) {
+            serial_write(" [directory]");
+        } else {
+            serial_write("  ");
+            serial_write_decimal(fat32_entries[i].size);
+            serial_write(" bytes");
+        }
+        serial_write("\n");
+    }
+}
+
+static void report_fat32_file(uint64_t device_index,
+                              uint64_t partition_number,
+                              const char *short_name) {
+    struct fat32_volume volume;
+    uint32_t bytes_read = 0;
+
+    if (!mount_fat32(device_index, partition_number, &volume)) {
+        return;
+    }
+    enum fat32_result result = fat32_read_root_file(
+        &volume, short_name, fat32_file_buffer, sizeof(fat32_file_buffer),
+        &bytes_read);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 file read failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return;
+    }
+
+    serial_write("Contents of ");
+    serial_write(short_name);
+    serial_write(":\n");
+    for (uint32_t i = 0; i < bytes_read; i++) {
+        char character = (char)fat32_file_buffer[i];
+        if (character == '\r') {
+            continue;
+        }
+        if (character == '\n') {
+            serial_write("\n");
+        } else if (character == '\t') {
+            serial_write("\t");
+        } else {
+            char text[2] = {
+                character >= 32 && character <= 126 ? character : '?',
+                '\0'
+            };
+            serial_write(text);
+        }
+    }
+    if (bytes_read == 0 || fat32_file_buffer[bytes_read - 1] != '\n') {
+        serial_write("\n");
+    }
 }
 
 static void report_system_info(void) {
@@ -576,6 +745,8 @@ static void handle_monitor_command(const char *line, void *context) {
         serial_write("  irq status        show interrupt-controller state\n");
         serial_write("  disk list         list registered block devices\n");
         serial_write("  gpt list [index]  list primary GPT partitions\n");
+        serial_write("  fs list DEV PART  list a FAT32 root directory\n");
+        serial_write("  fs cat DEV PART NAME  print a short-name text file\n");
         serial_write("  halt              halt the CPU\n");
         return;
     }
@@ -636,6 +807,43 @@ static void handle_monitor_command(const char *line, void *context) {
             return;
         }
         report_gpt_list(false, device_index);
+        return;
+    }
+    if (command_has_prefix(line, "fs list")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        if (!parse_filesystem_target(skip_spaces(line + 7), &device_index,
+                                     &partition_number, &remaining)
+            || *remaining != '\0') {
+            serial_write("Usage: fs list device-index gpt-partition-number\n");
+            return;
+        }
+        report_fat32_root(device_index, partition_number);
+        return;
+    }
+    if (command_has_prefix(line, "fs cat")) {
+        uint64_t device_index;
+        uint64_t partition_number;
+        const char *remaining;
+        char short_name[FAT32_SHORT_NAME_LENGTH];
+        if (!parse_filesystem_target(skip_spaces(line + 6), &device_index,
+                                     &partition_number, &remaining)) {
+            serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
+            return;
+        }
+        size_t name_length = 0;
+        while (remaining[name_length] != '\0' && remaining[name_length] != ' '
+               && name_length + 1 < sizeof(short_name)) {
+            short_name[name_length] = remaining[name_length];
+            name_length++;
+        }
+        short_name[name_length] = '\0';
+        if (name_length == 0 || remaining[name_length] != '\0') {
+            serial_write("Usage: fs cat device-index gpt-partition-number 8.3-name\n");
+            return;
+        }
+        report_fat32_file(device_index, partition_number, short_name);
         return;
     }
     if (text_equals(line, "halt")) {

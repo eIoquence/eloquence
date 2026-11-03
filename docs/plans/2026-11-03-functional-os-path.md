@@ -1,6 +1,6 @@
 # Functional OS Path
 
-**Status:** Active; serial monitor, 100 Hz clock, and ring-3 capability demo booted and exercised in QEMU
+**Status:** Active; serial monitor, 100 Hz clock, ring-3 capability demo, VirtIO block, GPT, and read-only FAT32 booted and exercised in QEMU
 
 ## Goal
 
@@ -42,6 +42,9 @@ commands are read-only except `halt`, and no dynamic allocation is required.
 4. Preemptive single-CPU scheduler, explicit address-space/page-table cleanup,
    and a bounded ELF loader to launch a separate diagnostic program.
 5. VirtIO Block, primary/backup GPT handling, and read-only FAT32 access.
+   **Partially implemented:** VirtIO legacy PCI block, primary GPT, FAT32 root
+   listing, and bounded short-name file reads. Backup GPT recovery and all
+   filesystem writes remain open.
 6. IPC and isolated device services, followed by network and multi-architecture
    runtime work.
 

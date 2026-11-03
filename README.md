@@ -8,13 +8,13 @@ The initial research focus is a hardware resource lifecycle:
 
 `Discovery → Authorization → Allocation → Ownership → Revocation → Release`
 
-The first functional baseline targets x86-64 under QEMU. AArch64 and RV64 have Limine bootstrap sources and linked-ELF CI targets; MIPS32 has a compile-only interrupt primitive. The x86-64 monitor, PIT/APIC clock, EDU driver, and ring-3 capability scenarios now boot and run under QEMU. No other architecture has a repeatable boot observation. DMA/IOMMU, scheduling, persistence, and physical-hardware performance claims remain later work.
+The first functional baseline targets x86-64 under QEMU. AArch64 and RV64 have Limine bootstrap sources and linked-ELF CI targets; MIPS32 has a compile-only interrupt primitive. The x86-64 monitor, PIT/APIC clock, EDU driver, ring-3 capability scenarios, VirtIO block driver, GPT discovery, and read-only FAT32 root access now boot and run under QEMU. No other architecture has a repeatable boot observation. Scheduling, writable filesystem support, IOMMU isolation, and physical-hardware performance claims remain later work.
 
 The project does not claim novelty for capability systems or exokernels in general. Research claims will be made only after comparison with prior systems and reproducible experiments.
 
 ## Current status
 
-Kernel bring-up is in progress. The x86-64 source includes Limine boot information, serial diagnostics, a bounded reclaiming page allocator, PCI inventory, a targeted QEMU EDU driver, and an experimental ring-3 MMIO demo using kernel-owned domain identity and scalar syscalls. The demo now passes in QEMU: owner read/write, foreign-domain denial, read-only denial, revocation, stale and malformed handle rejection, invalid syscall handling, and user-fault termination. A 100 Hz PIT clock reaches IRQ0 through the local APIC virtual-wire path. A polling COM1 monitor accepts bounded diagnostic commands after boot and reports timer and device state. The monitor remains kernel-resident; scheduling, persistent storage, and general userland are not implemented. Capability handles remain predictable slot/generation values, so the demo does not claim unforgeability. See:
+Kernel bring-up is in progress. The x86-64 source includes Limine boot information, serial diagnostics, a bounded reclaiming page allocator, PCI inventory, a targeted QEMU EDU driver, an experimental ring-3 MMIO demo using kernel-owned domain identity and scalar syscalls, a polling VirtIO block driver, a primary GPT parser, and read-only FAT32 root listing and short-name file access. The demo passes owner read/write, foreign-domain denial, read-only denial, revocation, stale and malformed handle rejection, invalid syscall handling, and user-fault termination. A 100 Hz PIT clock reaches IRQ0 through the local APIC virtual-wire path. The COM1 monitor accepts bounded diagnostic commands, including `disk list`, `gpt list`, `fs list`, and `fs cat`. The monitor remains kernel-resident; there is no scheduler, writable filesystem, or general userland. Capability handles remain predictable slot/generation values, so the demo does not claim unforgeability. See:
 
 - [Hardware Ownership Research](docs/research/hardware-ownership.md)
 - [System Research Roadmap](docs/research/system-roadmap.md)
@@ -22,9 +22,12 @@ Kernel bring-up is in progress. The x86-64 source includes Limine boot informati
 - [Experimental x86-64 Syscall ABI](docs/abi/x86_64-syscall.md)
 - [QEMU EDU PCI Driver](docs/drivers/qemu-edu.md)
 - [Legacy ATA PIO Driver](docs/drivers/ata-pio.md)
+- [VirtIO Block Driver](docs/drivers/virtio-block.md)
 - [Read-only GPT Discovery](docs/drivers/gpt.md)
+- [Read-only FAT32 Access](docs/drivers/fat32.md)
 - [x86-64 Serial Monitor](docs/drivers/serial-monitor.md)
 - [Functional OS Path](docs/plans/2026-11-03-functional-os-path.md)
+- [QEMU Storage and FAT32 Run](docs/experiments/2026-11-03-qemu-storage-fs.md)
 - [Multi-Architecture and FPGA Research Plan](docs/research/multi-architecture-and-fpga.md)
 - [ADR-0001: Research Scope and Initial Platform](docs/adr/0001-research-scope-and-platform.md)
 - [ADR-0002: Bootstrap Physical Page Allocation](docs/adr/0002-bootstrap-page-allocation.md)
@@ -50,7 +53,7 @@ QEMU is the functional baseline. Timing results from emulation will not be prese
 
 ## Development
 
-Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, and `xorriso`. Running the x86-64 image also requires `qemu-system-x86_64`.
+Prerequisites: GNU Make, Clang/LLVM with LLD, `curl`, `tar`, `xorriso`, and Python 3. Running the x86-64 image also requires `qemu-system-x86_64`.
 
 GitHub Actions builds the x86-64 ISO and linked AArch64 and RV64 ELF kernels on pushes and pull requests. It also compiles the current MIPS32 interrupt primitive; that target is not yet a kernel image. Build artifacts are retained for 14 days. The workflow compiles and packages the outputs without launching an emulator. Dependabot checks the GitHub Actions dependencies weekly.
 
@@ -84,4 +87,4 @@ The build downloads the pinned Limine v12.9.6 binary release and checks its SHA-
 
 The Limine protocol header is vendored from [limine-protocol](https://github.com/Limine-Bootloader/limine-protocol) at commit `6e85ddd6f928b5b512015c4d47d1cfce2fd28079`; its 0BSD notice is preserved in `include/limine.h`.
 
-The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator hands out and reclaims up to 8,192 tracked 4 KiB pages from usable regions. The QEMU EDU driver probes only its known BAR0, maps it uncached, checks the device identity, and verifies/restores its liveness register without enabling bus mastering. PCI discovery otherwise remains read-only. The x86-64 source enters ring 3 and routes scalar MMIO operations through `SYSCALL`; the kernel derives the actor from current-domain state. The QEMU run record demonstrates owner access, foreign/read-only denial, revocation, stale-handle rejection, and user-fault termination; kernel exceptions still halt. Capability handles are predictable slot/generation values and do not yet establish unforgeability. A bounded block-device registry is backed by an optional legacy ATA PIO driver; its discovery issues IDENTIFY only, while reads and writes require explicit callers. A read-only parser validates the primary GPT header and entry-array CRCs, but does not inspect the backup GPT. Writes may remain in volatile device cache until `block_device_flush` succeeds. The ATA path supports only 512-byte sectors and 28-bit LBA, polls with a finite timeout, and has no interrupt, AHCI, DMA, or filesystem support. The polling serial monitor supports `help`, `hwinfo`, `mem`, `uptime`, `irq status`, `disk list`, `gpt list`, and `halt`; it remains in kernel context and busy-polls COM1. User code and stack frames are reclaimed after the demo, while page-table frames are retained. Only timer IRQ0 is enabled; other external IRQs remain masked. See the [QEMU runtime record](docs/experiments/2026-11-03-qemu-x86_64-first-boot.md).
+The kernel requests bootloader information, the physical memory map, and the HHDM offset, then reports them over COM1. A single-CPU bootstrap allocator hands out and reclaims up to 8,192 tracked 4 KiB pages from usable regions. The QEMU EDU driver probes only its known BAR0, maps it uncached, checks the device identity, and verifies/restores its liveness register without enabling bus mastering. The VirtIO driver enables I/O and bus mastering for a matched transitional block device, uses a bounded polling queue and contiguous DMA buffers, and registers read/write/flush operations with the block layer. The ATA driver remains probe-only unless an explicit caller requests I/O. A read-only parser validates the primary GPT header and entry-array CRCs but does not inspect the backup GPT. FAT32 mounting validates volume bounds and metadata; the monitor can list the root directory and read text files up to 4 KiB using short 8.3 names. The x86-64 source enters ring 3 and routes scalar MMIO operations through `SYSCALL`; the kernel derives the actor from current-domain state. Capability handles remain predictable slot/generation values. The polling serial monitor supports `help`, `hwinfo`, `mem`, `uptime`, `irq status`, `disk list`, `gpt list`, `fs list`, `fs cat`, and `halt`; it remains in kernel context and busy-polls COM1. User code and stack frames are reclaimed after the demo, while page-table frames are retained. Only timer IRQ0 is enabled; other external IRQs remain masked. See the [QEMU boot record](docs/experiments/2026-11-03-qemu-x86_64-first-boot.md) and [storage run record](docs/experiments/2026-11-03-qemu-storage-fs.md).
