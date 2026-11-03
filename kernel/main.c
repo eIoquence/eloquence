@@ -12,8 +12,11 @@
 #include "drivers/pci/edu.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
+#include "monitor/serial_shell.h"
 #include "paging.h"
+#include "io.h"
 #include "serial.h"
+#include "timer.h"
 #include "storage/block_device.h"
 #include "storage/gpt.h"
 #include "user/mmio_demo.h"
@@ -47,6 +50,7 @@ struct limine_page_allocator_context {
 
 static struct limine_page_allocator_context page_allocator_context;
 static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
+static uint64_t pci_functions_found;
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
@@ -361,10 +365,53 @@ static void report_pci_devices(void) {
     }
 
     uint64_t found = pci_enumerate(report_pci_device, &mmio_available);
+    pci_functions_found = found;
 
     serial_write("PCI functions discovered: ");
     serial_write_decimal(found);
     serial_write("\n");
+}
+
+static const char *gpt_scan_result_name(enum gpt_scan_result result) {
+    switch (result) {
+        case GPT_SCAN_NOT_PRESENT: return "not present";
+        case GPT_SCAN_IO_ERROR: return "read error";
+        case GPT_SCAN_INVALID: return "invalid";
+        case GPT_SCAN_LIMIT_EXCEEDED: return "limit exceeded";
+        case GPT_SCAN_OK: return "ok";
+        default: return "unknown";
+    }
+}
+
+static void report_gpt_device(uint64_t device_index, const char *indent) {
+    uint32_t partition_count = 0;
+    enum gpt_scan_result result = gpt_scan_device(
+        device_index, discovered_partitions, GPT_MAX_PARTITIONS,
+        &partition_count);
+
+    if (result != GPT_SCAN_OK) {
+        serial_write(indent);
+        serial_write("primary GPT: ");
+        serial_write(gpt_scan_result_name(result));
+        serial_write("\n");
+        return;
+    }
+
+    serial_write(indent);
+    serial_write("primary GPT partitions: ");
+    serial_write_decimal(partition_count);
+    serial_write("\n");
+    for (uint32_t partition = 0; partition < partition_count; partition++) {
+        const struct gpt_partition *entry = &discovered_partitions[partition];
+        serial_write(indent);
+        serial_write("  entry=");
+        serial_write_decimal(entry->entry_number);
+        serial_write(" first-lba=");
+        serial_write_decimal(entry->first_lba);
+        serial_write(" last-lba=");
+        serial_write_decimal(entry->last_lba);
+        serial_write("\n");
+    }
 }
 
 static void report_block_devices(void) {
@@ -391,37 +438,211 @@ static void report_block_devices(void) {
         serial_write_decimal(device->sector_size);
         serial_write("\n");
 
-        uint32_t partition_count = 0;
-        enum gpt_scan_result result = gpt_scan_device(
-            i, discovered_partitions, GPT_MAX_PARTITIONS, &partition_count);
-        if (result != GPT_SCAN_OK) {
-            serial_write("    primary GPT: ");
-            switch (result) {
-                case GPT_SCAN_NOT_PRESENT: serial_write("not present"); break;
-                case GPT_SCAN_IO_ERROR: serial_write("read error"); break;
-                case GPT_SCAN_LIMIT_EXCEEDED: serial_write("limit exceeded"); break;
-                case GPT_SCAN_INVALID: serial_write("invalid"); break;
-                case GPT_SCAN_OK: break;
-            }
-            serial_write("\n");
+        report_gpt_device(i, "    ");
+    }
+}
+
+static bool text_equals(const char *left, const char *right) {
+    while (*left != '\0' && *left == *right) {
+        left++;
+        right++;
+    }
+    return *left == '\0' && *right == '\0';
+}
+
+static bool command_has_prefix(const char *command, const char *prefix) {
+    while (*prefix != '\0' && *command == *prefix) {
+        command++;
+        prefix++;
+    }
+    return *prefix == '\0' && (*command == '\0' || *command == ' ');
+}
+
+static const char *skip_spaces(const char *text) {
+    while (*text == ' ') {
+        text++;
+    }
+    return text;
+}
+
+static bool parse_device_index(const char *text, uint64_t *device_index) {
+    uint64_t value = 0;
+
+    if (*text < '0' || *text > '9') {
+        return false;
+    }
+    while (*text >= '0' && *text <= '9') {
+        uint64_t digit = (uint64_t)(*text - '0');
+        if (value > (UINT64_MAX - digit) / 10) {
+            return false;
+        }
+        value = value * 10 + digit;
+        text++;
+    }
+    if (*skip_spaces(text) != '\0') {
+        return false;
+    }
+
+    *device_index = value;
+    return true;
+}
+
+static void report_system_info(void) {
+    serial_write("Architecture: x86_64\n");
+    serial_write("Bootloader: ");
+    if (bootloader_request.response == 0
+        || bootloader_request.response->name == 0
+        || bootloader_request.response->version == 0) {
+        serial_write("unavailable\n");
+    } else {
+        serial_write(bootloader_request.response->name);
+        serial_write(" ");
+        serial_write(bootloader_request.response->version);
+        serial_write("\n");
+    }
+    serial_write("PCI functions: ");
+    serial_write_decimal(pci_functions_found);
+    serial_write("\nBlock devices: ");
+    serial_write_decimal(block_device_count());
+    serial_write("\nInteractive monitor: polling COM1\n");
+}
+
+static void report_disk_list(void) {
+    uint64_t device_count = block_device_count();
+
+    serial_write("Block devices: ");
+    serial_write_decimal(device_count);
+    serial_write("\n");
+    for (uint64_t i = 0; i < device_count; i++) {
+        const struct block_device *device = block_device_get(i);
+        if (device == 0) {
             continue;
         }
-
-        serial_write("    primary GPT partitions: ");
-        serial_write_decimal(partition_count);
-        serial_write("\n");
-        for (uint32_t partition = 0; partition < partition_count; partition++) {
-            const struct gpt_partition *entry =
-                &discovered_partitions[partition];
-            serial_write("      entry=");
-            serial_write_decimal(entry->entry_number);
-            serial_write(" first-lba=");
-            serial_write_decimal(entry->first_lba);
-            serial_write(" last-lba=");
-            serial_write_decimal(entry->last_lba);
-            serial_write("\n");
-        }
+        serial_write("  [");
+        serial_write_decimal(i);
+        serial_write("] ");
+        serial_write(device->name);
+        serial_write(" model=");
+        serial_write(device->model);
+        serial_write(" sectors=");
+        serial_write_decimal(device->sector_count);
+        serial_write(" sector-size=");
+        serial_write_decimal(device->sector_size);
+        serial_write(device->read_only ? " read-only\n" : " read-write\n");
     }
+}
+
+static void report_gpt_list(bool all_devices, uint64_t device_index) {
+    uint64_t device_count = block_device_count();
+
+    if (all_devices) {
+        if (device_count == 0) {
+            serial_write("No block devices are registered.\n");
+            return;
+        }
+        for (uint64_t i = 0; i < device_count; i++) {
+            const struct block_device *device = block_device_get(i);
+            if (device == 0) {
+                continue;
+            }
+            serial_write("Device [");
+            serial_write_decimal(i);
+            serial_write("] ");
+            serial_write(device->name);
+            serial_write(":\n");
+            report_gpt_device(i, "  ");
+        }
+        return;
+    }
+
+    if (device_index >= device_count) {
+        serial_write("Block device index is out of range.\n");
+        return;
+    }
+    report_gpt_device(device_index, "");
+}
+
+static void handle_monitor_command(const char *line, void *context) {
+    (void)context;
+    if (*line == '\0') {
+        return;
+    }
+    if (text_equals(line, "help")) {
+        serial_write("Commands:\n");
+        serial_write("  help              show this list\n");
+        serial_write("  hwinfo            show boot and device summary\n");
+        serial_write("  mem               show the boot memory map\n");
+        serial_write("  uptime            show time since timer start\n");
+        serial_write("  irq status        show interrupt-controller state\n");
+        serial_write("  disk list         list registered block devices\n");
+        serial_write("  gpt list [index]  list primary GPT partitions\n");
+        serial_write("  halt              halt the CPU\n");
+        return;
+    }
+    if (text_equals(line, "hwinfo")) {
+        report_system_info();
+        return;
+    }
+    if (text_equals(line, "mem")) {
+        report_memory_map();
+        return;
+    }
+    if (text_equals(line, "uptime")) {
+        uint64_t ticks = x86_timer_ticks();
+        serial_write("Uptime: ");
+        serial_write_decimal(ticks / X86_TIMER_FREQUENCY_HZ);
+        serial_write(" seconds (");
+        serial_write_decimal(ticks);
+        serial_write(" timer ticks)\n");
+        return;
+    }
+    if (text_equals(line, "irq status")) {
+        arch_irq_state_t irq_state = arch_irq_save();
+        x86_outb(0x20, 0x0a);
+        uint8_t pending = x86_inb(0x20);
+        x86_outb(0x20, 0x0b);
+        uint8_t in_service = x86_inb(0x20);
+        uint8_t mask = x86_inb(0x21);
+        arch_irq_restore(irq_state);
+        serial_write("CPU IF: ");
+        serial_write((irq_state & (1ULL << 9)) != 0
+                     ? "enabled\n" : "disabled\n");
+        serial_write("PIC master mask: 0x");
+        serial_write_hex(mask);
+        serial_write(" IRR: 0x");
+        serial_write_hex(pending);
+        serial_write(" ISR: 0x");
+        serial_write_hex(in_service);
+        serial_write("\nTimer ticks: ");
+        serial_write_decimal(x86_timer_ticks());
+        serial_write("\nLocal APIC: ");
+        serial_write(x86_timer_uses_local_apic() ? "enabled\n" : "unavailable\n");
+        serial_write("\n");
+        return;
+    }
+    if (text_equals(line, "disk list")) {
+        report_disk_list();
+        return;
+    }
+    if (command_has_prefix(line, "gpt list")) {
+        const char *argument = skip_spaces(line + 8);
+        if (*argument == '\0') {
+            report_gpt_list(true, 0);
+            return;
+        }
+        uint64_t device_index;
+        if (!parse_device_index(argument, &device_index)) {
+            serial_write("Usage: gpt list [device-index]\n");
+            return;
+        }
+        report_gpt_list(false, device_index);
+        return;
+    }
+    if (text_equals(line, "halt")) {
+        arch_cpu_halt();
+    }
+
+    serial_write("Unknown command. Type 'help'.\n");
 }
 
 void kmain(void) {
@@ -457,6 +678,10 @@ void kmain(void) {
     }
     report_pci_devices();
     report_block_devices();
-    serial_write("Boot information report complete; kernel halted.\n");
-    arch_cpu_halt();
+    if (!x86_timer_initialize()) {
+        serial_write("Warning: local APIC setup failed; timer IRQ delivery may be unavailable\n");
+    }
+    serial_write("Boot information report complete.\n");
+    __asm__ volatile ("sti" : : : "memory");
+    serial_shell_run(handle_monitor_command, 0);
 }

@@ -32,6 +32,15 @@ void serial_write(const char *text) {
     }
 }
 
+bool serial_try_read_char(char *value) {
+    if (value == 0 || (x86_inb(COM1_BASE + 5) & 0x01) == 0) {
+        return false;
+    }
+
+    *value = (char)x86_inb(COM1_BASE);
+    return true;
+}
+
 void serial_write_hex(uint64_t value) {
     static const char digits[] = "0123456789abcdef";
 

@@ -59,6 +59,8 @@ External interrupts remain disabled while the demo runs.
 
 The implementation supports one active domain on one CPU. A scheduler,
 address-space teardown, frame reclamation, handle hardening, asynchronous
-interrupts, and a stable syscall versioning scheme are future work. Build
-success is not a runtime isolation result; the ring-3 scenarios still need an
-observed boot run.
+interrupts, and a stable syscall versioning scheme are future work. The
+current ring-3 scenarios were observed under QEMU; the run record is linked
+from the [serial monitor documentation](../drivers/serial-monitor.md).
+Arbitrary kernel-memory access attempts and general process teardown still
+need dedicated isolation coverage.

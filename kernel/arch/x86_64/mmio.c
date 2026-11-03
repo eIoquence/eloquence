@@ -266,7 +266,7 @@ bool x86_mmio_map_range(uint64_t physical_address, uint64_t length,
     if (rounded_span == 0 || rounded_span > MMIO_WINDOW_SIZE
         || !add_u64(physical_page, rounded_span, &physical_end)
         || (physical_page & ~PAGE_ADDRESS_MASK) != 0
-        || ((physical_end - 1) & ~PAGE_ADDRESS_MASK) != 0
+        || ((physical_end - 1) & ~(PAGE_ADDRESS_MASK | PAGE_MASK)) != 0
         || physical_page == 0
         || overlaps_hhdm_mapping(physical_page, rounded_span)) {
         return false;

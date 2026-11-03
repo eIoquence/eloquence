@@ -198,10 +198,8 @@ bool x86_address_space_create_user(struct x86_address_space *space) {
     }
 
     for (uint16_t index = USER_PML4_START; index < PAGE_ENTRY_COUNT; index++) {
-        if ((current.root_virtual_address[index] & PAGE_USER) != 0) {
-            return false;
-        }
-        new_root[index] = current.root_virtual_address[index];
+        /* Keep shared kernel mappings supervisor-only in this address space. */
+        new_root[index] = current.root_virtual_address[index] & ~PAGE_USER;
     }
 
     space->root_physical_address = new_root_physical;

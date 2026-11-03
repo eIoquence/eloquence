@@ -35,9 +35,8 @@ x86_syscall_entry:
     popq %rdi
     addq $8, %rsp
 
-    movq %gs:0, %rsi
+    movq %gs:0, %rsp
     swapgs
-    movq %rsi, %rsp
     sysretq
 
 .Lreturn_to_kernel:
