@@ -14,6 +14,7 @@
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
+#include "process/process.h"
 #include "paging.h"
 #include "io.h"
 #include "serial.h"
@@ -1018,6 +1019,32 @@ bool kernel_system_directory_create(uint64_t packed_name,
     if (!vfs_create_directory(path)) {
         serial_write("Could not create directory (read-only media, name exists, or I/O error).\n");
         return false;
+    }
+    return true;
+}
+
+bool kernel_system_process_list(void) {
+    struct kernel_process_info processes[KERNEL_PROCESS_MAX];
+    uint32_t count = kernel_process_snapshot(processes, KERNEL_PROCESS_MAX);
+
+    serial_write("PID  STATE     EXIT  RUNTIME-TICKS\n");
+    for (uint32_t i = 0; i < count; i++) {
+        const struct kernel_process_info *process = &processes[i];
+        uint64_t end = process->state == KERNEL_PROCESS_RUNNING
+            ? x86_timer_ticks() : process->finished_at_tick;
+        serial_write_decimal(process->process_id);
+        serial_write("  ");
+        switch (process->state) {
+            case KERNEL_PROCESS_RUNNING: serial_write("running"); break;
+            case KERNEL_PROCESS_EXITED: serial_write("exited"); break;
+            case KERNEL_PROCESS_FAULTED: serial_write("faulted"); break;
+            default: serial_write("unknown"); break;
+        }
+        serial_write("  ");
+        serial_write_decimal(process->exit_status);
+        serial_write("  ");
+        serial_write_decimal(end - process->started_at_tick);
+        serial_write("\n");
     }
     return true;
 }

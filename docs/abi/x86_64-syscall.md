@@ -45,6 +45,8 @@ accepts a domain ID.
 | 16 | `FS_WRITE_COMMIT` | None | `RAX[63:32]`: result code; commits pending write |
 | 17 | `FS_MKDIR` | `RDI`: packed 8.3 name | `RAX[63:32]`: result code; creates a root directory |
 | 18 | `FS_WRITE_ABORT` | None | `RAX[63:32]`: result code; discards pending write |
+| 19 | `PROCESS_LIST` | None | `RAX[63:32]`: result code; prints the bounded process history |
+| 20 | `PROCESS_KILL` | `RDI`: process ID | Terminates the caller with status 137 only when the ID is the caller's current process ID |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -70,6 +72,11 @@ so power loss during a mutation can leave the volume inconsistent. Directory
 creation and file operations are root-only; the shell has no subdirectory path
 traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
 replaces it on commit.
+
+`PROCESS_LIST` reports up to 16 most recent process records, including PID,
+state, exit status, and runtime ticks. The kernel records one foreground user
+process at a time. `PROCESS_KILL` currently accepts only that running process;
+there is no concurrent process scheduling or cross-process termination yet.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

@@ -5,7 +5,9 @@
 #include "arch/x86_64/paging.h"
 #include "arch/x86_64/user_mode.h"
 #include "domain/domain.h"
+#include "process/process.h"
 #include "memory/page_allocator.h"
+#include "arch/x86_64/timer.h"
 #include "elf_loader.h"
 
 #define ELF64_HEADER_SIZE 64U
@@ -289,6 +291,7 @@ bool x86_user_elf_run(const void *image, size_t image_size,
     uint64_t entry;
     bool ran;
     bool cleanup_ok;
+    bool recorded;
     uint64_t process_domain;
 
     if (image == 0 || image_size == 0 || exit_status == 0 || faulted == 0
@@ -305,9 +308,19 @@ bool x86_user_elf_run(const void *image, size_t image_size,
     }
 
     process_domain = process_state.next_domain_id++;
+    if (kernel_process_start(process_domain, x86_timer_ticks()) == 0) {
+        (void)cleanup_process_pages();
+        return false;
+    }
     ran = x86_user_mode_run(&process_state.address_space, entry,
                             USER_STACK_POINTER, process_domain,
                             0, 0, 0, exit_status, faulted);
+    if (!ran) {
+        *exit_status = UINT64_MAX;
+        *faulted = true;
+    }
+    recorded = kernel_process_finish(process_domain, x86_timer_ticks(),
+                                     *exit_status, *faulted);
     cleanup_ok = cleanup_process_pages();
-    return ran && cleanup_ok;
+    return ran && recorded && cleanup_ok;
 }

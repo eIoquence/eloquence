@@ -191,7 +191,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
-        "about", "exit"
+        "ps", "kill", "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -222,6 +222,22 @@ static bool text_equals(const char *left, const char *right) {
         right++;
     }
     return *left == '\0' && *right == '\0';
+}
+
+static bool parse_process_id(const char *text, uint64_t *process_id) {
+    uint64_t value = 0;
+    if (*text == '\0' || process_id == 0) {
+        return false;
+    }
+    for (; *text != '\0'; text++) {
+        if (*text < '0' || *text > '9'
+            || value > (UINT64_MAX - (uint64_t)(*text - '0')) / 10) {
+            return false;
+        }
+        value = value * 10 + (uint64_t)(*text - '0');
+    }
+    *process_id = value;
+    return true;
 }
 
 static void read_line(char *line, size_t capacity, const char *history) {
@@ -311,7 +327,7 @@ __attribute__((noreturn)) void _start(void) {
             }
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, kill PID, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -366,6 +382,24 @@ __attribute__((noreturn)) void _start(void) {
             system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
         } else if (text_equals(line, "bootinfo")) {
             system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+        } else if (text_equals(line, "ps")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_PROCESS_LIST, 0, 0, 0);
+        } else if (command_is(line, "kill")) {
+            const char *argument = line + 4;
+            uint64_t process_id;
+            while (*argument == ' ' || *argument == '\t') {
+                argument++;
+            }
+            if (!parse_process_id(argument, &process_id)) {
+                write_string("Usage: kill PID\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_PROCESS_KILL,
+                                               process_id, 0, 0);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("kill: PID must be the current process\n");
+                }
+            }
         } else if (text_equals(line, "ls")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_FS_LIST, 0, 1, 0);
         } else if (text_equals(line, "pwd")) {

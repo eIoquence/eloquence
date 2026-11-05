@@ -3,6 +3,7 @@
 
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"
+#include "process/process.h"
 #include "serial.h"
 #include "timer.h"
 #include "system_info.h"
@@ -113,6 +114,20 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
         case ELOQUENCE_SYSCALL_FS_WRITE_ABORT:
             kernel_system_file_write_abort();
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        case ELOQUENCE_SYSCALL_PROCESS_LIST:
+            return pack_result(kernel_system_process_list()
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_PROCESS_KILL:
+            if (frame->rdi != kernel_domain_current_id()
+                || !kernel_process_is_running(frame->rdi)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            x86_user_mode_set_exit_status(137);
+            kernel_domain_leave();
+            return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
         default:
             break;
     }
