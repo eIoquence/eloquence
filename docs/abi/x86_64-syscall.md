@@ -51,6 +51,8 @@ accepts a domain ID.
 | 22 | `PROCESS_SPAWN` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads a static ELF as a runnable child; low 32 bits of `RAX` contain its PID |
 | 23 | `FS_READ_CHUNK` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension, `RDX`: byte offset | `RAX[63:32]`: result; `RAX[31:30]`: byte count; `RAX[23:0]`: up to 3 file bytes packed little-endian |
 | 24 | `PROCESS_WAIT` | `RDI`: child process ID | `RAX[63:32]`: result (`WOULD_BLOCK` while live); `RAX[31:0]`: exit status after completion |
+| 25 | `FS_LIST_CWD` | None | `RAX[63:32]`: result; prints the current process directory |
+| 26 | `FS_CHDIR` | `RDI`: packed name, `RSI`: extension; root and parent use `ELOQUENCE_FS_CHDIR_ROOT` and `ELOQUENCE_FS_CHDIR_PARENT` | `RAX[63:32]`: result; changes the current process directory |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -68,13 +70,16 @@ and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
 kernel-owned snapshots; it never accepts user pointers. The report interface
 is experimental and currently covers system, usable-memory, CPUID vendor and
 family/model/features, device, timer/IRQ, and bootloader summaries.
-Filesystem calls target device 0, partition 1 and currently expose only the
-FAT32 root. Names are validated ASCII 8.3 names. Writes are limited to 16 KiB
+Filesystem calls target device 0, partition 1. File names are validated ASCII
+8.3 names; the shell can navigate nested FAT32 directories with `cd`, `cd ..`,
+and `cd /`. The kernel tracks a current directory cluster per process, and
+`ls`, `cat`, `stat`, `touch`, `rm`, `mkdir`, and file writes operate there.
+Writes are limited to 16 KiB
 and staged by scalar calls; the kernel does not accept user pointers. The block
 device must support write and flush. FAT32 metadata updates are not journaled,
-so power loss during a mutation can leave the volume inconsistent. Directory
-creation and file operations are root-only; the shell has no subdirectory path
-traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
+so power loss during a mutation can leave the volume inconsistent. Long file
+names, direct multi-component path arguments, and directory removal are not yet
+supported. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
 replaces it on commit.
 `FS_READ_CHUNK` reads up to three bytes from the root FAT32 volume at the
 requested byte offset; the top two bits of the low half contain the returned

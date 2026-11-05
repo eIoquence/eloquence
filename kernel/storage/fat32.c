@@ -25,6 +25,13 @@ static bool cluster_sector_lba(const struct fat32_volume *volume,
                                uint64_t *lba);
 static void make_short_name(const uint8_t *raw, char *name);
 static bool short_name_equals(const char *left, const char *right);
+static enum fat32_result list_directory(
+    const struct fat32_volume *volume, uint32_t first_cluster,
+    struct fat32_directory_entry *entries, uint32_t capacity,
+    uint32_t *entry_count);
+static enum fat32_result fat32_create_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name);
 
 static uint16_t read_u16_le(const uint8_t *bytes) {
     return (uint16_t)bytes[0] | (uint16_t)((uint16_t)bytes[1] << 8);
@@ -349,10 +356,11 @@ static bool encode_short_name(const char *name, uint8_t raw[11]) {
 }
 
 static enum fat32_result find_root_entry_slot(
-    const struct fat32_volume *volume, const uint8_t raw_name[11],
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const uint8_t raw_name[11],
     uint64_t *slot_lba, uint32_t *slot_offset, uint8_t existing_entry[32],
     bool *exists) {
-    uint32_t cluster = volume->root_cluster;
+    uint32_t cluster = directory_cluster;
     bool have_free_slot = false;
     uint64_t free_lba = 0;
     uint32_t free_offset = 0;
@@ -429,6 +437,13 @@ static enum fat32_result find_root_entry_slot(
 enum fat32_result fat32_write_root_file(
     const struct fat32_volume *volume, const char *short_name,
     const void *buffer, uint32_t bytes) {
+    return fat32_write_directory_file(volume, volume->root_cluster,
+                                      short_name, buffer, bytes);
+}
+
+enum fat32_result fat32_write_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name, const void *buffer, uint32_t bytes) {
     const uint8_t *source = buffer;
     uint8_t raw_name[11];
     uint8_t old_entry[FAT32_DIRECTORY_ENTRY_SIZE];
@@ -439,13 +454,16 @@ enum fat32_result fat32_write_root_file(
     uint32_t slot_offset;
     bool exists;
 
-    if (!valid_volume(volume) || bytes > FAT32_MAX_FILE_WRITE_BYTES
+    if (!valid_volume(volume) || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U
+        || bytes > FAT32_MAX_FILE_WRITE_BYTES
         || (bytes != 0 && buffer == 0)
         || !encode_short_name(short_name, raw_name)) {
         return FAT32_INVALID;
     }
     enum fat32_result result = find_root_entry_slot(
-        volume, raw_name, &slot_lba, &slot_offset, old_entry, &exists);
+        volume, directory_cluster, raw_name, &slot_lba, &slot_offset,
+        old_entry, &exists);
     if (result != FAT32_OK) {
         return result;
     }
@@ -555,22 +573,42 @@ enum fat32_result fat32_write_root_file(
 
 enum fat32_result fat32_create_root_file(
     const struct fat32_volume *volume, const char *short_name) {
+    return fat32_create_directory_file(volume, volume != 0
+        ? volume->root_cluster : 0, short_name);
+}
+
+static enum fat32_result fat32_create_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name) {
     struct fat32_directory_entry entries[FAT32_MAX_DIRECTORY_ENTRIES];
     uint32_t entry_count = 0;
-    if (fat32_list_root(volume, entries, FAT32_MAX_DIRECTORY_ENTRIES,
-                        &entry_count) != FAT32_OK) {
-        return FAT32_IO_ERROR;
+    if (!valid_volume(volume) || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U) {
+        return FAT32_INVALID;
+    }
+    enum fat32_result result = list_directory(volume, directory_cluster,
+        entries, FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    if (result != FAT32_OK) {
+        return result;
     }
     for (uint32_t i = 0; i < entry_count; i++) {
         if (short_name_equals(entries[i].short_name, short_name)) {
             return FAT32_OK;
         }
     }
-    return fat32_write_root_file(volume, short_name, 0, 0);
+    return fat32_write_directory_file(volume, directory_cluster,
+                                      short_name, 0, 0);
 }
 
 enum fat32_result fat32_create_root_directory(
     const struct fat32_volume *volume, const char *short_name) {
+    return fat32_create_directory(volume, volume != 0
+                                      ? volume->root_cluster : 0, short_name);
+}
+
+enum fat32_result fat32_create_directory(
+    const struct fat32_volume *volume, uint32_t parent_cluster,
+    const char *short_name) {
     uint8_t raw_name[11];
     uint8_t existing[FAT32_DIRECTORY_ENTRY_SIZE];
     uint64_t slot_lba;
@@ -578,11 +616,14 @@ enum fat32_result fat32_create_root_directory(
     bool exists;
     uint32_t cluster;
 
-    if (!valid_volume(volume) || !encode_short_name(short_name, raw_name)) {
+    if (!valid_volume(volume) || parent_cluster < 2
+        || parent_cluster >= volume->cluster_count + 2U
+        || !encode_short_name(short_name, raw_name)) {
         return FAT32_INVALID;
     }
     enum fat32_result result = find_root_entry_slot(
-        volume, raw_name, &slot_lba, &slot_offset, existing, &exists);
+        volume, parent_cluster, raw_name, &slot_lba, &slot_offset, existing,
+        &exists);
     if (result != FAT32_OK) {
         return result;
     }
@@ -611,9 +652,9 @@ enum fat32_result fat32_create_root_directory(
             write_u16_le(sector_buffer + 20, (uint16_t)(cluster >> 16));
             write_u16_le(sector_buffer + 26, (uint16_t)cluster);
             write_u16_le(sector_buffer + FAT32_DIRECTORY_ENTRY_SIZE + 20,
-                         (uint16_t)(volume->root_cluster >> 16));
+                         (uint16_t)(parent_cluster >> 16));
             write_u16_le(sector_buffer + FAT32_DIRECTORY_ENTRY_SIZE + 26,
-                         (uint16_t)volume->root_cluster);
+                         (uint16_t)parent_cluster);
         }
         uint64_t lba;
         if (!cluster_sector_lba(volume, cluster, sector, &lba)
@@ -649,8 +690,17 @@ enum fat32_result fat32_create_root_directory(
 
 enum fat32_result fat32_delete_root_file(
     const struct fat32_volume *volume, const char *short_name) {
-    uint32_t cluster = volume != 0 ? volume->root_cluster : 0;
-    if (!valid_volume(volume) || short_name == 0 || *short_name == '\0') {
+    return fat32_delete_directory_file(volume, volume != 0
+        ? volume->root_cluster : 0, short_name);
+}
+
+enum fat32_result fat32_delete_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name) {
+    uint32_t cluster = directory_cluster;
+    if (!valid_volume(volume) || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U
+        || short_name == 0 || *short_name == '\0') {
         return FAT32_INVALID;
     }
     for (uint32_t step = 0; step < volume->cluster_count; step++) {
@@ -881,22 +931,112 @@ enum fat32_result fat32_list_root(
                           entry_count);
 }
 
+enum fat32_result fat32_list_directory(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    struct fat32_directory_entry *entries, uint32_t capacity,
+    uint32_t *entry_count) {
+    if (!valid_volume(volume) || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U
+        || entries == 0 || capacity == 0 || entry_count == 0) {
+        return FAT32_INVALID;
+    }
+    return list_directory(volume, directory_cluster, entries, capacity,
+                          entry_count);
+}
+
+enum fat32_result fat32_find_directory(
+    const struct fat32_volume *volume, uint32_t parent_cluster,
+    const char *short_name, uint32_t *directory_cluster) {
+    uint32_t entry_count = 0;
+    if (!valid_volume(volume) || parent_cluster < 2
+        || parent_cluster >= volume->cluster_count + 2U || short_name == 0
+        || directory_cluster == 0) {
+        return FAT32_INVALID;
+    }
+    enum fat32_result result = list_directory(
+        volume, parent_cluster, root_entry_scratch,
+        FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    if (result != FAT32_OK) {
+        return result;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (short_name_equals(root_entry_scratch[i].short_name, short_name)) {
+            if ((root_entry_scratch[i].attributes
+                 & FAT32_ATTRIBUTE_DIRECTORY) == 0) {
+                return FAT32_INVALID;
+            }
+            if (root_entry_scratch[i].first_cluster < 2
+                || root_entry_scratch[i].first_cluster
+                       >= volume->cluster_count + 2U) {
+                return FAT32_INVALID;
+            }
+            *directory_cluster = root_entry_scratch[i].first_cluster;
+            return FAT32_OK;
+        }
+    }
+    return FAT32_NOT_FOUND;
+}
+
+enum fat32_result fat32_parent_directory(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    uint32_t *parent_cluster) {
+    uint64_t lba;
+    if (!valid_volume(volume) || parent_cluster == 0
+        || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U) {
+        return FAT32_INVALID;
+    }
+    if (directory_cluster == volume->root_cluster) {
+        *parent_cluster = volume->root_cluster;
+        return FAT32_OK;
+    }
+    if (!cluster_sector_lba(volume, directory_cluster, 0, &lba)
+        || !block_device_read(volume->device_index, lba, 1, sector_buffer)) {
+        return FAT32_IO_ERROR;
+    }
+    const uint8_t *entry = sector_buffer + FAT32_DIRECTORY_ENTRY_SIZE;
+    if (entry[0] != '.' || entry[1] != '.'
+        || (entry[11] & FAT32_ATTRIBUTE_DIRECTORY) == 0) {
+        return FAT32_INVALID;
+    }
+    uint32_t parent = ((uint32_t)read_u16_le(entry + 20) << 16)
+        | read_u16_le(entry + 26);
+    if (parent == 0) {
+        parent = volume->root_cluster;
+    }
+    if (parent < 2 || parent >= volume->cluster_count + 2U) {
+        return FAT32_INVALID;
+    }
+    *parent_cluster = parent;
+    return FAT32_OK;
+}
+
 enum fat32_result fat32_read_root_file(
     const struct fat32_volume *volume, const char *short_name,
     void *buffer, uint32_t capacity, uint32_t *bytes_read) {
+    return fat32_read_directory_file(volume, volume != 0
+        ? volume->root_cluster : 0, short_name, buffer, capacity, bytes_read);
+}
+
+enum fat32_result fat32_read_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name, void *buffer, uint32_t capacity,
+    uint32_t *bytes_read) {
     uint32_t entry_count = 0;
     uint32_t remaining;
     uint32_t cluster;
     uint8_t *destination = buffer;
     struct fat32_directory_entry *entry = 0;
 
-    if (!valid_volume(volume) || short_name == 0 || buffer == 0
+    if (!valid_volume(volume) || directory_cluster < 2
+        || directory_cluster >= volume->cluster_count + 2U
+        || short_name == 0 || buffer == 0
         || bytes_read == 0) {
         return FAT32_INVALID;
     }
     *bytes_read = 0;
     enum fat32_result result = list_directory(
-        volume, volume->root_cluster, root_entry_scratch,
+        volume, directory_cluster, root_entry_scratch,
         FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
     if (result != FAT32_OK) {
         return result;

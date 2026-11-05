@@ -47,11 +47,11 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    open.
 5. VirtIO Block, GPT, and FAT32 access.
    **Partially implemented:** VirtIO legacy PCI block, primary GPT, and a
-   single-root VFS with bounded FAT32 create/write/delete and directory
-   creation. Shell `ls`, `cat`, `stat`, `touch`, `rm`, `mkdir`, and
-   `echo TEXT > FILE` use kernel-mediated operations. Multiple mounts,
-   subdirectory path traversal, backup GPT recovery, and journaling remain
-   open.
+   writable FAT32 VFS with bounded create/write/delete and nested directories.
+   The shell tracks a current directory per process; `ls`, `cd /A/B`, `pwd`,
+   `cat`, `stat`, `touch`, `rm`, `mkdir`, and `echo TEXT > FILE` use
+   kernel-mediated operations in that directory. Direct multi-component file
+   arguments, multiple mounts, backup GPT recovery, and journaling remain open.
 6. Minimal user-facing console ABI.
    **Partially implemented:** ring-3 programs can read one serial character
    non-blockingly and write validated ASCII one character per syscall. A

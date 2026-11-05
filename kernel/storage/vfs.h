@@ -14,26 +14,42 @@ struct vfs_entry {
 };
 
 struct vfs_operations {
-    bool (*list_root)(void *context, struct vfs_entry *entries,
+    bool (*list_directory)(void *context, uint32_t directory,
+                      struct vfs_entry *entries,
                       uint32_t capacity, uint32_t *entry_count);
-    bool (*read_root_file)(void *context, const char *name, void *buffer,
+    bool (*read_file)(void *context, uint32_t directory, const char *name,
+                           void *buffer,
                            uint32_t capacity, uint32_t *bytes_read);
-    bool (*create_root_file)(void *context, const char *name);
-    bool (*delete_root_file)(void *context, const char *name);
-    bool (*write_root_file)(void *context, const char *name,
+    bool (*create_file)(void *context, uint32_t directory, const char *name);
+    bool (*delete_file)(void *context, uint32_t directory, const char *name);
+    bool (*write_file)(void *context, uint32_t directory, const char *name,
                             const void *buffer, uint32_t bytes);
-    bool (*create_root_directory)(void *context, const char *name);
+    bool (*create_directory)(void *context, uint32_t parent,
+                             const char *name);
+    bool (*find_directory)(void *context, uint32_t parent, const char *name,
+                           uint32_t *directory);
 };
 
 bool vfs_mount_root(const struct vfs_operations *operations, void *context);
 bool vfs_root_mounted(void);
 bool vfs_list_root(struct vfs_entry *entries, uint32_t capacity,
                    uint32_t *entry_count);
+bool vfs_list_directory(uint32_t directory, struct vfs_entry *entries,
+                        uint32_t capacity, uint32_t *entry_count);
 bool vfs_read_file(const char *path, void *buffer, uint32_t capacity,
                    uint32_t *bytes_read);
 bool vfs_create_file(const char *path);
 bool vfs_delete_file(const char *path);
 bool vfs_write_file(const char *path, const void *buffer, uint32_t bytes);
 bool vfs_create_directory(const char *path);
+bool vfs_create_directory_in(uint32_t parent, const char *name);
+bool vfs_find_directory(uint32_t parent, const char *name,
+                        uint32_t *directory);
+bool vfs_read_file_in(uint32_t directory, const char *name, void *buffer,
+                      uint32_t capacity, uint32_t *bytes_read);
+bool vfs_create_file_in(uint32_t directory, const char *name);
+bool vfs_delete_file_in(uint32_t directory, const char *name);
+bool vfs_write_file_in(uint32_t directory, const char *name,
+                       const void *buffer, uint32_t bytes);
 
 #endif

@@ -612,6 +612,100 @@ static void run_script(const char *filename) {
     }
 }
 
+static bool change_directory_component(char *argument, char *path,
+                                      size_t capacity) {
+    uint64_t result;
+    bool to_root = text_equals(argument, "/");
+    bool to_parent = text_equals(argument, "..");
+    if (to_root) {
+        result = user_syscall(ELOQUENCE_SYSCALL_FS_CHDIR,
+                              ELOQUENCE_FS_CHDIR_ROOT, 0, 0);
+    } else if (to_parent) {
+        result = user_syscall(ELOQUENCE_SYSCALL_FS_CHDIR,
+                              ELOQUENCE_FS_CHDIR_PARENT, 0, 0);
+    } else {
+        uint64_t packed_base;
+        uint64_t packed_extension;
+        if (!pack_filename(argument, &packed_base, &packed_extension)) {
+            write_string("Usage: cd / | .. | SHORTNAME\n");
+            return false;
+        }
+        result = user_syscall(ELOQUENCE_SYSCALL_FS_CHDIR, packed_base,
+                              packed_extension, 0);
+    }
+    if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+        write_string("cd: directory not found or inaccessible\n");
+        return false;
+    }
+    if (to_root) {
+        path[0] = '/';
+        path[1] = '\0';
+    } else if (to_parent) {
+        size_t length = text_length(path);
+        if (length > 1) {
+            while (length > 1 && path[length - 1] != '/') {
+                length--;
+            }
+            if (length > 1) {
+                path[length - 1] = '\0';
+            } else {
+                path[1] = '\0';
+            }
+        }
+    } else {
+        size_t length = text_length(path);
+        size_t name_length = text_length(argument);
+        size_t separator = length == 1 ? 0 : 1;
+        if (length + separator + name_length + 1 > capacity) {
+            write_string("cd: path exceeds shell path limit\n");
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_CHDIR,
+                               ELOQUENCE_FS_CHDIR_PARENT, 0, 0);
+            return false;
+        }
+        if (separator != 0) {
+            path[length++] = '/';
+        }
+        for (size_t i = 0; i < name_length; i++) {
+            path[length++] = argument[i];
+        }
+        path[length] = '\0';
+    }
+    return true;
+}
+
+static bool change_directory(char *argument, char *path, size_t capacity) {
+    char *cursor = argument;
+    if (*cursor == '\0') {
+        write_string("Usage: cd /PATH | PATH | ..\n");
+        return false;
+    }
+    if (*cursor == '/') {
+        if (!change_directory_component("/", path, capacity)) {
+            return false;
+        }
+        cursor++;
+    }
+    while (*cursor != '\0') {
+        char *separator = cursor;
+        while (*separator != '\0' && *separator != '/') {
+            separator++;
+        }
+        bool more = *separator == '/';
+        if (more) {
+            *separator = '\0';
+        }
+        if (*cursor != '\0' && !text_equals(cursor, ".")
+            && !change_directory_component(cursor, path, capacity)) {
+            return false;
+        }
+        if (!more) {
+            break;
+        }
+        cursor = separator + 1;
+    }
+    return true;
+}
+
 static bool parse_process_id(const char *text, uint64_t *process_id) {
     uint64_t value = 0;
     if (*text == '\0' || process_id == 0) {
@@ -703,6 +797,7 @@ static void read_line(char *line, size_t capacity, const char *history) {
 __attribute__((noreturn)) void _start(void) {
     char line[SHELL_LINE_CAPACITY];
     char history[SHELL_LINE_CAPACITY] = {0};
+    char current_path[128] = "/";
 
     write_string("Eloquence user shell. Type 'help'.\n");
     for (;;) {
@@ -874,13 +969,13 @@ __attribute__((noreturn)) void _start(void) {
                 }
             }
         } else if (text_equals(line, "ls")) {
-            (void)user_syscall(ELOQUENCE_SYSCALL_FS_LIST, 0, 1, 0);
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_LIST_CWD, 0, 0, 0);
         } else if (text_equals(line, "pwd")) {
-            write_string("/\n");
-        } else if (text_equals(line, "cd /")) {
-            write_string("/\n");
+            write_string(current_path);
+            write_char('\n');
         } else if (command_is(line, "cd")) {
-            write_string("Only the root directory is available.\n");
+            (void)change_directory(skip_spaces(line + 2), current_path,
+                                   sizeof(current_path));
         } else if (command_is(line, "cat")) {
             const char *filename = line + 3;
             uint64_t packed_base;

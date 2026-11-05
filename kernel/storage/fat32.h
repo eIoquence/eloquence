@@ -48,6 +48,29 @@ enum fat32_result fat32_list_root(
     const struct fat32_volume *volume,
     struct fat32_directory_entry *entries, uint32_t capacity,
     uint32_t *entry_count);
+enum fat32_result fat32_list_directory(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    struct fat32_directory_entry *entries, uint32_t capacity,
+    uint32_t *entry_count);
+enum fat32_result fat32_find_directory(
+    const struct fat32_volume *volume, uint32_t parent_cluster,
+    const char *short_name, uint32_t *directory_cluster);
+enum fat32_result fat32_parent_directory(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    uint32_t *parent_cluster);
+enum fat32_result fat32_read_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name, void *buffer, uint32_t capacity,
+    uint32_t *bytes_read);
+enum fat32_result fat32_write_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name, const void *buffer, uint32_t bytes);
+enum fat32_result fat32_create_directory(
+    const struct fat32_volume *volume, uint32_t parent_cluster,
+    const char *short_name);
+enum fat32_result fat32_delete_directory_file(
+    const struct fat32_volume *volume, uint32_t directory_cluster,
+    const char *short_name);
 enum fat32_result fat32_read_root_file(
     const struct fat32_volume *volume, const char *short_name,
     void *buffer, uint32_t capacity, uint32_t *bytes_read);
