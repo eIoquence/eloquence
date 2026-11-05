@@ -203,7 +203,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
-        "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias"
+        "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -1006,7 +1006,9 @@ __attribute__((noreturn)) void _start(void) {
 
     write_string("Eloquence user shell. Type 'help'.\n");
     for (;;) {
-        write_string("user> ");
+        write_string("user:");
+        write_string(current_path);
+        write_string("> ");
         history_pos = history_count;
         read_line(line, sizeof(line), history, history_count, &history_pos);
         if (line[0] != '\0' && history_count < 8) {
@@ -1093,7 +1095,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1433,6 +1435,13 @@ __attribute__((noreturn)) void _start(void) {
                     shell_alias_count--;
                     break;
                 }
+            }
+        } else if (text_equals(line, "history")) {
+            for (size_t i = 0; i < history_count; i++) {
+                write_unsigned(i + 1);
+                write_string("  ");
+                write_string(history[i]);
+                write_char('\n');
             }
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
