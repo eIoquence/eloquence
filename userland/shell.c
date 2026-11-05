@@ -910,7 +910,9 @@ static bool parse_process_id(const char *text, uint64_t *process_id) {
     return true;
 }
 
-static void read_line(char *line, size_t capacity, const char *history) {
+static void read_line(char *line, size_t capacity,
+                      char history[][SHELL_LINE_CAPACITY],
+                      size_t history_count, size_t *history_pos) {
     size_t length = 0;
     bool skip_line_feed = false;
     uint8_t escape_state = 0;
@@ -934,7 +936,19 @@ static void read_line(char *line, size_t capacity, const char *history) {
                 continue;
             }
             if (escape_state == 2 && value == 'A') {
-                recall_line(line, &length, capacity, history);
+                if (history_count != 0 && *history_pos > 0) {
+                    (*history_pos)--;
+                    recall_line(line, &length, capacity, history[*history_pos]);
+                }
+            }
+            if (escape_state == 2 && value == 'B') {
+                if (*history_pos + 1 < history_count) {
+                    (*history_pos)++;
+                    recall_line(line, &length, capacity, history[*history_pos]);
+                } else {
+                    while (length != 0) { length--; erase_character(); }
+                    line[0] = '\0';
+                }
             }
             escape_state = 0;
             continue;
@@ -984,18 +998,24 @@ static void read_line(char *line, size_t capacity, const char *history) {
 
 __attribute__((noreturn)) void _start(void) {
     char line[SHELL_LINE_CAPACITY];
-    char history[SHELL_LINE_CAPACITY] = {0};
+    char history[8][SHELL_LINE_CAPACITY];
+    for (size_t hi = 0; hi < 8; hi++) history[hi][0] = '\0';
+    size_t history_count = 0;
+    size_t history_pos = 0;
     char current_path[128] = "/";
 
     write_string("Eloquence user shell. Type 'help'.\n");
     for (;;) {
         write_string("user> ");
-        read_line(line, sizeof(line), history);
-        if (line[0] != '\0') {
+        history_pos = history_count;
+        read_line(line, sizeof(line), history, history_count, &history_pos);
+        if (line[0] != '\0' && history_count < 8) {
             size_t length = text_length(line);
-            for (size_t i = 0; i <= length; i++) {
-                history[i] = line[i];
+            for (size_t i = 0; i <= length && i + 1 < SHELL_LINE_CAPACITY; i++) {
+                history[history_count][i] = line[i];
             }
+            history[history_count][length] = '\0';
+            history_count++;
         }
         /* alias expansion */
         {
