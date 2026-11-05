@@ -1440,6 +1440,10 @@ bool kernel_system_report(uint64_t report) {
             serial_write_decimal(memory_map != 0 ? memory_map->entry_count : 0);
             serial_write("\n");
             return true;
+        case ELOQUENCE_SYSTEM_REPORT_MMIO:
+            serial_write("MMIO access is capability-mediated from Ring 3.\n");
+            serial_write("Direct unprotected MMIO access is not available.\n");
+            return true;
         default:
             return false;
     }

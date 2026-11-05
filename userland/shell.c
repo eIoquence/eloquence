@@ -193,9 +193,9 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
     static const char *const commands[] = {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
-        "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
+        "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
-        "about", "exit"
+        "about", "exit", "reboot", "shutdown"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -470,6 +470,12 @@ static void run_script_line(char *line,
         system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
     } else if (text_equals(command, "bootinfo")) {
         system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+    } else if (text_equals(command, "mmio")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_MMIO);
+    } else if (text_equals(command, "reboot")) {
+        (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
+    } else if (text_equals(command, "shutdown")) {
+        (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
     } else {
         write_string("script: unsupported command: ");
         write_string(command);
@@ -963,7 +969,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1020,6 +1026,8 @@ __attribute__((noreturn)) void _start(void) {
             system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
         } else if (text_equals(line, "bootinfo")) {
             system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+        } else if (text_equals(line, "mmio")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_MMIO);
         } else if (text_equals(line, "ps")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_PROCESS_LIST, 0, 0, 0);
         } else if (text_equals(line, "jobs")) {
@@ -1175,6 +1183,12 @@ __attribute__((noreturn)) void _start(void) {
             }
         } else if (command_is(line, "cp") || command_is(line, "mv")) {
             write_string("Command is not implemented yet.\n");
+        } else if (text_equals(line, "reboot")) {
+            write_string("Rebooting...\n");
+            (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
+        } else if (text_equals(line, "shutdown")) {
+            write_string("Shutting down...\n");
+            (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {

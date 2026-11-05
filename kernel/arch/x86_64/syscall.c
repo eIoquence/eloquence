@@ -174,6 +174,16 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
                                (uint32_t)process.exit_status);
         }
+        case ELOQUENCE_SYSCALL_SYSTEM_CONTROL:
+            if (frame->rdi == 1) {
+                __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFE), "Nd"((uint16_t)0x64));
+            } else {
+                __asm__ volatile ("cli");
+                for (;;) {
+                    __asm__ volatile ("hlt");
+                }
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         default:
             break;
     }
