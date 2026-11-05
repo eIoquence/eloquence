@@ -55,3 +55,5 @@ worked through kernel-mediated, read-only FAT32 access. `cat` accepts bounded
 pass through a single-root VFS adapter backed by FAT32. `pwd` works at `/`;
 `cd` only confirms the root because there are no subdirectories in the shell
 interface yet. Multiple mounts and write support are absent.
+`cpuinfo` reports the CPUID vendor, family, model, and selected feature bits;
+QEMU returned those fields successfully.

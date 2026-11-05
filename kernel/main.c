@@ -941,6 +941,66 @@ static void report_system_info(void) {
     serial_write("\nInteractive monitor: polling COM1\n");
 }
 
+struct x86_cpuid_result {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+};
+
+static struct x86_cpuid_result x86_cpuid(uint32_t leaf, uint32_t subleaf) {
+    struct x86_cpuid_result result;
+    __asm__ volatile ("cpuid"
+                      : "=a"(result.eax), "=b"(result.ebx),
+                        "=c"(result.ecx), "=d"(result.edx)
+                      : "a"(leaf), "c"(subleaf));
+    return result;
+}
+
+static void report_cpu_info(void) {
+    struct x86_cpuid_result basic = x86_cpuid(0, 0);
+    struct x86_cpuid_result version = x86_cpuid(1, 0);
+    char vendor[13];
+    const uint32_t vendor_words[3] = {basic.ebx, basic.edx, basic.ecx};
+
+    for (uint32_t word = 0; word < 3; word++) {
+        for (uint32_t byte = 0; byte < 4; byte++) {
+            vendor[word * 4 + byte] =
+                (char)(vendor_words[word] >> (byte * 8));
+        }
+    }
+    vendor[12] = '\0';
+    uint32_t base_family = (version.eax >> 8) & 0xf;
+    uint32_t family = base_family;
+    uint32_t model = (version.eax >> 4) & 0xf;
+    uint32_t extended_family = (version.eax >> 20) & 0xff;
+    uint32_t extended_model = (version.eax >> 16) & 0xf;
+    if (family == 0xf) {
+        family += extended_family;
+    }
+    if (base_family == 6 || base_family == 0xf) {
+        model |= extended_model << 4;
+    }
+
+    serial_write("Architecture: x86_64\nVendor: ");
+    serial_write(vendor);
+    serial_write("\nFamily: ");
+    serial_write_decimal(family);
+    serial_write(" Model: ");
+    serial_write_decimal(model);
+    serial_write("\nFeatures:");
+    if ((version.edx & (1U << 25)) != 0) serial_write(" SSE");
+    if ((version.edx & (1U << 26)) != 0) serial_write(" SSE2");
+    if ((version.ecx & (1U << 25)) != 0) serial_write(" AES");
+    if ((version.ecx & (1U << 28)) != 0) serial_write(" AVX");
+    if ((version.ecx & (1U << 31)) != 0) serial_write(" hypervisor");
+    if (basic.eax >= 7) {
+        struct x86_cpuid_result structured = x86_cpuid(7, 0);
+        if ((structured.ebx & (1U << 5)) != 0) serial_write(" AVX2");
+    }
+    serial_write("\n");
+}
+
 bool kernel_system_report(uint64_t report) {
     const struct limine_memmap_response *memory_map =
         memory_map_request.response;
@@ -968,7 +1028,7 @@ bool kernel_system_report(uint64_t report) {
             return true;
         }
         case ELOQUENCE_SYSTEM_REPORT_CPUINFO:
-            serial_write("Architecture: x86_64\nCPU model/features: not exposed yet\n");
+            report_cpu_info();
             return true;
         case ELOQUENCE_SYSTEM_REPORT_DEVINFO:
             serial_write("PCI functions: ");

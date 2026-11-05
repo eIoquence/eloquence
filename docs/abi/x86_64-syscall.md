@@ -53,8 +53,8 @@ and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
 100 Hz timer rate.
 `SYSTEM_REPORT` accepts only enumerated scalar selectors and prints sanitized
 kernel-owned snapshots; it never accepts user pointers. The report interface
-is experimental and currently covers system, usable-memory, architecture,
-device, timer/IRQ, and bootloader summaries.
+is experimental and currently covers system, usable-memory, CPUID vendor and
+family/model/features, device, timer/IRQ, and bootloader summaries.
 `FS_LIST`, `FS_CAT`, and `FS_STAT` are read-only and currently expose only the
 FAT32 root. `FS_CAT` and `FS_STAT` accept validated ASCII 8.3 names and target
 device 0, partition 1.
