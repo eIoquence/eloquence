@@ -11,6 +11,10 @@
 #define TIMER_FREQUENCY_HZ 100U
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
 #define SHELL_ENV_CAPACITY 8U
+#define SHELL_ALIAS_CAPACITY 8U
+static char shell_alias_names[SHELL_ALIAS_CAPACITY][16];
+static char shell_alias_values[SHELL_ALIAS_CAPACITY][64];
+static size_t shell_alias_count = 0;
 static char shell_env_names[SHELL_ENV_CAPACITY][16];
 static char shell_env_values[SHELL_ENV_CAPACITY][64];
 static size_t shell_env_count = 0;
@@ -199,7 +203,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
-        "about", "exit", "reboot", "shutdown", "env", "export"
+        "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -961,6 +965,42 @@ __attribute__((noreturn)) void _start(void) {
                 history[i] = line[i];
             }
         }
+        /* alias expansion */
+        {
+            char *cursor = line;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            char *name_end = cursor;
+            while (*name_end != '\0' && *name_end != ' ' && *name_end != '\t') name_end++;
+            char saved = *name_end;
+            *name_end = '\0';
+            for (size_t i = 0; i < shell_alias_count; i++) {
+                if (text_equals(shell_alias_names[i], cursor)) {
+                    char rest[SHELL_LINE_CAPACITY];
+                    size_t ri = 0;
+                    char *r = name_end;
+                    while (*r != '\0' && ri + 1 < SHELL_LINE_CAPACITY) {
+                        rest[ri++] = *r++;
+                    }
+                    rest[ri] = '\0';
+                    *name_end = saved;
+                    /* rebuild line */
+                    char buffer[SHELL_LINE_CAPACITY];
+                    size_t bi = 0;
+                    for (size_t j = 0; shell_alias_values[i][j] != '\0' && bi + 1 < SHELL_LINE_CAPACITY; j++) {
+                        buffer[bi++] = shell_alias_values[i][j];
+                    }
+                    for (size_t j = 0; rest[j] != '\0' && bi + 1 < SHELL_LINE_CAPACITY; j++) {
+                        buffer[bi++] = rest[j];
+                    }
+                    buffer[bi] = '\0';
+                    for (size_t j = 0; j <= bi; j++) {
+                        line[j] = buffer[j];
+                    }
+                    break;
+                }
+            }
+            *name_end = saved;
+        }
         bool has_pipe = false;
         for (size_t i = 0; line[i] != '\0'; i++) {
             if (line[i] == '|') {
@@ -973,7 +1013,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1268,6 +1308,50 @@ __attribute__((noreturn)) void _start(void) {
                 for (size_t i = 0; value[i] != '\0' && i + 1 < 64; i++) {
                     shell_env_values[slot][i] = value[i];
                     shell_env_values[slot][i + 1] = '\0';
+                }
+            }
+        } else if (command_is(line, "alias")) {
+            char *cursor = line + 5;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            if (*cursor == '\0') {
+                for (size_t i = 0; i < shell_alias_count; i++) {
+                    write_string(shell_alias_names[i]);
+                    write_string("=");
+                    write_string(shell_alias_values[i]);
+                    write_char('\n');
+                }
+            } else {
+                char *eq = cursor;
+                while (*eq != '\0' && *eq != '=') eq++;
+                if (*eq != '=') {
+                    write_string("Usage: alias NAME=COMMAND\n");
+                } else {
+                    *eq = '\0';
+                    char *value = eq + 1;
+                    if (shell_alias_count < SHELL_ALIAS_CAPACITY) {
+                        size_t slot = shell_alias_count++;
+                        for (size_t i = 0; cursor[i] != '\0' && i + 1 < 16; i++) {
+                            shell_alias_names[slot][i] = cursor[i];
+                            shell_alias_names[slot][i + 1] = '\0';
+                        }
+                        for (size_t i = 0; value[i] != '\0' && i + 1 < 64; i++) {
+                            shell_alias_values[slot][i] = value[i];
+                            shell_alias_values[slot][i + 1] = '\0';
+                        }
+                    }
+                }
+            }
+        } else if (command_is(line, "unalias")) {
+            char *name = line + 7;
+            while (*name == ' ' || *name == '\t') name++;
+            for (size_t i = 0; i < shell_alias_count; i++) {
+                if (text_equals(shell_alias_names[i], name)) {
+                    for (size_t j = i + 1; j < shell_alias_count; j++) {
+                        for (size_t k = 0; k < 16; k++) shell_alias_names[j-1][k] = shell_alias_names[j][k];
+                        for (size_t k = 0; k < 64; k++) shell_alias_values[j-1][k] = shell_alias_values[j][k];
+                    }
+                    shell_alias_count--;
+                    break;
                 }
             }
         } else if (text_equals(line, "about")) {
