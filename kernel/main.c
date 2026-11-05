@@ -66,6 +66,10 @@ static uint8_t shell_write_buffer[FAT32_MAX_FILE_WRITE_BYTES];
 static char shell_write_name[FAT32_SHORT_NAME_LENGTH];
 static uint32_t shell_write_length;
 static bool shell_write_active;
+static char shell_copy_name[FAT32_SHORT_NAME_LENGTH];
+static uint32_t shell_copy_length;
+static bool shell_copy_active;
+static bool shell_copy_move;
 struct shell_process_directory {
     uint64_t process_id;
     uint32_t cluster;
@@ -1071,6 +1075,58 @@ bool kernel_system_file_delete(uint64_t packed_name,
         serial_write("Could not delete file (not found, read-only media, or I/O error).\n");
         return false;
     }
+    return true;
+}
+
+bool kernel_system_file_copy_begin(uint64_t packed_name,
+                                   uint64_t packed_extension,
+                                   uint64_t mode) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t bytes_read = 0;
+    if (shell_copy_active
+        || !decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()
+        || !vfs_read_file_in(shell_current_directory(), name,
+                             fat32_file_buffer,
+                             sizeof(fat32_file_buffer), &bytes_read)) {
+        serial_write("Could not read source file.\n");
+        return false;
+    }
+    for (uint32_t i = 0; i < FAT32_SHORT_NAME_LENGTH; i++) {
+        shell_copy_name[i] = name[i];
+    }
+    shell_copy_length = bytes_read;
+    shell_copy_move = mode != 0;
+    shell_copy_active = true;
+    return true;
+}
+
+bool kernel_system_file_copy_commit(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!shell_copy_active
+        || !decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (shell_copy_move) {
+        (void)vfs_delete_file_in(shell_current_directory(), name);
+    }
+    if (!vfs_create_file_in(shell_current_directory(), name)) {
+        serial_write("Could not create destination file.\n");
+        shell_copy_active = false;
+        return false;
+    }
+    if (!vfs_write_file_in(shell_current_directory(), name,
+                           fat32_file_buffer, shell_copy_length)) {
+        serial_write("Could not write destination file.\n");
+        shell_copy_active = false;
+        return false;
+    }
+    if (shell_copy_move) {
+        (void)vfs_delete_file_in(shell_current_directory(), shell_copy_name);
+    }
+    shell_copy_active = false;
     return true;
 }
 

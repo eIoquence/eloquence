@@ -160,6 +160,19 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                (uint32_t)process_id);
         }
+        case ELOQUENCE_SYSCALL_FS_COPY_BEGIN:
+            return pack_result(kernel_system_file_copy_begin(frame->rdi,
+                                                               frame->rsi,
+                                                               frame->rdx)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_COPY_COMMIT:
+            return pack_result(kernel_system_file_copy_commit(frame->rdi,
+                                                              frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
         case ELOQUENCE_SYSCALL_PROCESS_WAIT: {
             struct kernel_process_info process;
             if (!kernel_process_get(frame->rdi, &process)

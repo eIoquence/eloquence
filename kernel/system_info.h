@@ -17,6 +17,11 @@ bool kernel_system_file_create(uint64_t packed_name,
                                uint64_t packed_extension);
 bool kernel_system_file_delete(uint64_t packed_name,
                                uint64_t packed_extension);
+bool kernel_system_file_copy_begin(uint64_t packed_name,
+                                  uint64_t packed_extension,
+                                  uint64_t mode);
+bool kernel_system_file_copy_commit(uint64_t packed_name,
+                                   uint64_t packed_extension);
 bool kernel_system_file_write_begin(uint64_t packed_name,
                                     uint64_t packed_extension);
 bool kernel_system_file_write_data(uint64_t packed_data, uint64_t bytes);

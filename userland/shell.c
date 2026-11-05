@@ -1182,7 +1182,50 @@ __attribute__((noreturn)) void _start(void) {
                                    packed_extension, 0);
             }
         } else if (command_is(line, "cp") || command_is(line, "mv")) {
-            write_string("Command is not implemented yet.\n");
+            bool move_file = line[0] == 'm';
+            char *cursor = line + 2;
+            char *source_name = cursor;
+            char *destination_name;
+            uint64_t source_base;
+            uint64_t source_extension;
+            uint64_t destination_base;
+            uint64_t destination_extension;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t') {
+                cursor++;
+            }
+            while (*cursor == ' ' || *cursor == '\t') {
+                *cursor++ = '\0';
+            }
+            destination_name = cursor;
+            if (!pack_filename(source_name, &source_base, &source_extension)
+                || !pack_filename(destination_name, &destination_base,
+                                 &destination_extension)) {
+                write_string(move_file ? "Usage: mv SRC.EXT DST.EXT\n"
+                                      : "Usage: cp SRC.EXT DST.EXT\n");
+            } else {
+                uint64_t result = user_syscall(
+                    ELOQUENCE_SYSCALL_FS_COPY_BEGIN, source_base,
+                    source_extension, move_file ? 1 : 0);
+                if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string(move_file ? "mv: could not read source\n"
+                                          : "cp: could not read source\n");
+                } else {
+                    result = user_syscall(ELOQUENCE_SYSCALL_FS_COPY_COMMIT,
+                                          destination_base, destination_extension,
+                                          0);
+                    if ((uint32_t)(result >> 32)
+                        != ELOQUENCE_SYSCALL_RESULT_OK) {
+                        write_string(move_file ? "mv: could not write destination\n"
+                                              : "cp: could not write destination\n");
+                    } else {
+                        write_string(move_file ? "Moved " : "Copied ");
+                        write_string(source_name);
+                        write_string(" to ");
+                        write_string(destination_name);
+                        write_char('\n');
+                    }
+                }
+            }
         } else if (text_equals(line, "reboot")) {
             write_string("Rebooting...\n");
             (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
