@@ -5,6 +5,7 @@
 #include "domain/domain.h"
 #include "serial.h"
 #include "timer.h"
+#include "system_info.h"
 #include "syscall.h"
 #include "eloquence/syscall_abi.h"
 #include "user_mode.h"
@@ -56,6 +57,11 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         case ELOQUENCE_SYSCALL_UPTIME_TICKS:
             return x86_timer_ticks();
+        case ELOQUENCE_SYSCALL_SYSTEM_REPORT:
+            return pack_result(kernel_system_report(frame->rdi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
         default:
             break;
     }

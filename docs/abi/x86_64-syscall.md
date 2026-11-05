@@ -34,6 +34,7 @@ accepts a domain ID.
 | 5 | `CONSOLE_READ_CHAR` | None | `RAX[63:32]`: result code; `RAX[7:0]`: character on success |
 | 6 | `CONSOLE_CLEAR` | None | `RAX[63:32]`: result code |
 | 7 | `UPTIME_TICKS` | None | `RAX`: monotonic timer ticks since timer initialization |
+| 8 | `SYSTEM_REPORT` | `RDI`: report selector from `syscall_abi.h` | `RAX[63:32]`: result code; report text is formatted by the kernel |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -47,6 +48,10 @@ feed is translated to CRLF. `CONSOLE_CLEAR` emits the terminal clear/home
 sequence through the kernel serial console. These calls use scalar arguments
 and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
 100 Hz timer rate.
+`SYSTEM_REPORT` accepts only enumerated scalar selectors and prints sanitized
+kernel-owned snapshots; it never accepts user pointers. The report interface
+is experimental and currently covers system, usable-memory, architecture,
+device, timer/IRQ, and bootloader summaries.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

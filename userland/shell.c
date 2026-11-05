@@ -50,6 +50,10 @@ static void write_unsigned(uint64_t value) {
     }
 }
 
+static void system_report(uint64_t report) {
+    (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_REPORT, report, 0, 0);
+}
+
 static bool command_is(const char *line, const char *name) {
     while (*name != '\0' && *line == *name) {
         line++;
@@ -126,7 +130,7 @@ __attribute__((noreturn)) void _start(void) {
         write_string("user> ");
         read_line(line, sizeof(line));
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT, uname, uptime, version, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -148,6 +152,18 @@ __attribute__((noreturn)) void _start(void) {
             write_string(" ticks)\n");
         } else if (text_equals(line, "version")) {
             write_string(SHELL_VERSION "\n");
+        } else if (text_equals(line, "sysinfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_SYSINFO);
+        } else if (text_equals(line, "meminfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_MEMINFO);
+        } else if (text_equals(line, "cpuinfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_CPUINFO);
+        } else if (text_equals(line, "devinfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_DEVINFO);
+        } else if (text_equals(line, "irqinfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
+        } else if (text_equals(line, "bootinfo")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {

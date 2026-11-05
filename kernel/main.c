@@ -24,6 +24,7 @@
 #include "user/mmio_demo.h"
 #include "user/elf_loader.h"
 #include "user_mode.h"
+#include "system_info.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -729,6 +730,78 @@ static void report_system_info(void) {
     serial_write("\nBlock devices: ");
     serial_write_decimal(block_device_count());
     serial_write("\nInteractive monitor: polling COM1\n");
+}
+
+bool kernel_system_report(uint64_t report) {
+    const struct limine_memmap_response *memory_map =
+        memory_map_request.response;
+
+    switch (report) {
+        case ELOQUENCE_SYSTEM_REPORT_SYSINFO:
+            report_system_info();
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_MEMINFO: {
+            uint64_t usable_bytes = 0;
+            if (memory_map == 0 || memory_map->entries == 0) {
+                serial_write("Memory map unavailable\n");
+                return true;
+            }
+            for (uint64_t i = 0; i < memory_map->entry_count; i++) {
+                const struct limine_memmap_entry *entry = memory_map->entries[i];
+                if (entry != 0 && entry->type == LIMINE_MEMMAP_USABLE
+                    && usable_bytes <= UINT64_MAX - entry->length) {
+                    usable_bytes += entry->length;
+                }
+            }
+            serial_write("Usable physical memory: ");
+            serial_write_decimal(usable_bytes / (1024 * 1024));
+            serial_write(" MiB (boot memory map; not free-page count)\n");
+            return true;
+        }
+        case ELOQUENCE_SYSTEM_REPORT_CPUINFO:
+            serial_write("Architecture: x86_64\nCPU model/features: not exposed yet\n");
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_DEVINFO:
+            serial_write("PCI functions: ");
+            serial_write_decimal(pci_functions_found);
+            serial_write("\nBlock devices: ");
+            serial_write_decimal(block_device_count());
+            serial_write("\n");
+            for (uint64_t i = 0; i < block_device_count(); i++) {
+                const struct block_device *device = block_device_get(i);
+                if (device != 0) {
+                    serial_write(device->name);
+                    serial_write(" model=");
+                    serial_write(device->model);
+                    serial_write(device->read_only ? " read-only\n" : " writable\n");
+                }
+            }
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_IRQINFO:
+            serial_write("Timer ticks: ");
+            serial_write_decimal(x86_timer_ticks());
+            serial_write(" (100 Hz)\nLocal APIC timer routing: ");
+            serial_write(x86_timer_uses_local_apic() ? "active\n" : "inactive\n");
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_BOOTINFO:
+            serial_write("Bootloader: ");
+            if (bootloader_request.response != 0
+                && bootloader_request.response->name != 0
+                && bootloader_request.response->version != 0) {
+                serial_write(bootloader_request.response->name);
+                serial_write(" ");
+                serial_write(bootloader_request.response->version);
+                serial_write("\n");
+            } else {
+                serial_write("unavailable\n");
+            }
+            serial_write("Physical memory map entries: ");
+            serial_write_decimal(memory_map != 0 ? memory_map->entry_count : 0);
+            serial_write("\n");
+            return true;
+        default:
+            return false;
+    }
 }
 
 static void report_disk_list(void) {

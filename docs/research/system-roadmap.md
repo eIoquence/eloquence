@@ -68,7 +68,7 @@ that can be claimed from an interface stub.
 | DMA / IOMMU | Not implemented | Buffer ownership protocol and isolation tests on a named compatible platform |
 | Scheduler / IPC | Not implemented | Timer source, context-switch ABI, domain lifecycle, bounded message and capability transfer |
 | Storage / network | Block-device API, legacy ATA PIO, polling VirtIO legacy PCI block driver, primary GPT parser, and read-only FAT32 root listing/short-name reads; [QEMU storage run](../experiments/2026-11-03-qemu-storage-fs.md) | Backup GPT recovery, FAT32 writes and subdirectories, modern VirtIO transport, network protocols, and reproducible workload records |
-| SDK / userland | Kernel monitor plus bounded static ELF loader; a compiled `SHELL.ELF` auto-starts from FAT32 and provides `help`, `clear`, `echo`, `uname`, `uptime`, `version`, `about`, `exit`, Backspace, and Ctrl-U through scalar syscalls | Scheduler, process/service management, stable syscall/API contract, libraries, and broader development tools |
+| SDK / userland | Kernel monitor plus bounded static ELF loader; `SHELL.ELF` auto-starts from FAT32 with line editing and `help`, `clear`, `echo`, `uname`, `uptime`, `version`, `sysinfo`, `meminfo`, `cpuinfo`, `devinfo`, `irqinfo`, `bootinfo`, `about`, and `exit` | Scheduler, process/service management, stable syscall/API contract, libraries, filesystem commands, and broader development tools |
 
 Build success, boot success, functional support, and measured performance are
 separate maturity levels. A CI artifact is a build result, not proof that a

@@ -51,9 +51,10 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    **Partially implemented:** ring-3 programs can read one serial character
    non-blockingly and write validated ASCII one character per syscall. A
    separate compiled `SHELL.ELF` auto-starts from the first FAT32 partition
-   and supports `help`, `clear`, `echo`, `uname`, `uptime`, `version`, `about`,
-   and `exit`, with Backspace/Ctrl-U editing. The ABI remains experimental;
-   buffering, history, parser expansion, and inspection calls remain open.
+   and supports core shell commands plus `sysinfo`, `meminfo`, `cpuinfo`,
+   `devinfo`, `irqinfo`, and `bootinfo` reports through scalar requests.
+   Backspace/Ctrl-U editing works. The ABI remains experimental; buffering,
+   history, parser expansion, and filesystem commands remain open.
 7. Scheduler and IPC, then isolated device services, network, and
    multi-architecture runtime work.
 

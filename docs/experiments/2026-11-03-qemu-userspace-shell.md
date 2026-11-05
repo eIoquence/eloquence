@@ -40,8 +40,11 @@ than physical hardware.
 ## Shell 0.1 follow-up
 
 The ring-3 shell now exposes `help`, `clear`, `echo`, `uname`, `uptime`,
-`version`, `about`, and `exit`. QEMU interaction confirmed the new commands:
+`version`, `sysinfo`, `meminfo`, `cpuinfo`, `devinfo`, `irqinfo`, `bootinfo`,
+`about`, and `exit`. QEMU interaction confirmed the new commands:
 `uptime` reported live 100 Hz timer ticks, `clear` emitted the terminal
-clear/home sequence, and `echo` preserved multiword arguments. The generated
-QEMU FAT32 fixture is refreshed by each `make run` so shell changes are not
-silently tested against a stale disk image.
+clear/home sequence, `echo` preserved multiword arguments, and all six system
+reports returned kernel-sourced data. `meminfo` labels its value as total
+usable physical memory and explicitly does not claim it is free memory. The
+generated QEMU FAT32 fixture is refreshed by each `make run` so shell changes
+are not silently tested against a stale disk image.
