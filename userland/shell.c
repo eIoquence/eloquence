@@ -477,6 +477,59 @@ static void run_script_line(char *line,
     }
 }
 
+static bool expand_script_text(const char *source,
+                               struct shell_script_variable *variables,
+                               char expanded[SHELL_LINE_CAPACITY]) {
+    size_t output_length = 0;
+    for (size_t i = 0; source[i] != '\0';) {
+        if (source[i] != '$') {
+            if (output_length + 1 >= SHELL_LINE_CAPACITY) {
+                return false;
+            }
+            expanded[output_length++] = source[i++];
+            continue;
+        }
+        size_t name_start = i + 1;
+        size_t name_end = name_start;
+        while (variable_name_char(source[name_end])) {
+            name_end++;
+        }
+        if (name_end == name_start) {
+            if (output_length + 1 >= SHELL_LINE_CAPACITY) {
+                return false;
+            }
+            expanded[output_length++] = source[i++];
+            continue;
+        }
+        char name[16];
+        size_t name_length = name_end - name_start;
+        if (name_length >= sizeof(name)) {
+            return false;
+        }
+        for (size_t j = 0; j < name_length; j++) {
+            name[j] = source[name_start + j];
+        }
+        name[name_length] = '\0';
+        const char *value = "";
+        for (size_t j = 0; j < SHELL_SCRIPT_VARIABLES; j++) {
+            if (variables[j].used && text_equals(variables[j].name, name)) {
+                value = variables[j].value;
+                break;
+            }
+        }
+        size_t value_length = text_length(value);
+        if (output_length + value_length >= SHELL_LINE_CAPACITY) {
+            return false;
+        }
+        for (size_t j = 0; j < value_length; j++) {
+            expanded[output_length++] = value[j];
+        }
+        i = name_end;
+    }
+    expanded[output_length] = '\0';
+    return true;
+}
+
 static void run_script_commands(char *line,
                                 struct shell_script_variable *variables) {
     char expanded[SHELL_LINE_CAPACITY];
@@ -490,57 +543,10 @@ static void run_script_commands(char *line,
         if (more) {
             *separator = '\0';
         }
-        size_t output_length = 0;
-        for (size_t i = 0; command_start[i] != '\0';) {
-            if (command_start[i] != '$') {
-                if (output_length + 1 >= sizeof(expanded)) {
-                    write_string("script: expanded command exceeds 80 bytes\n");
-                    return;
-                }
-                expanded[output_length++] = command_start[i++];
-                continue;
-            }
-            size_t name_start = i + 1;
-            size_t name_end = name_start;
-            while (variable_name_char(command_start[name_end])) {
-                name_end++;
-            }
-            if (name_end == name_start) {
-                if (output_length + 1 >= sizeof(expanded)) {
-                    write_string("script: expanded command exceeds 80 bytes\n");
-                    return;
-                }
-                expanded[output_length++] = command_start[i++];
-                continue;
-            }
-            char name[16];
-            size_t name_length = name_end - name_start;
-            if (name_length >= sizeof(name)) {
-                write_string("script: variable name exceeds 15 bytes\n");
-                return;
-            }
-            for (size_t j = 0; j < name_length; j++) {
-                name[j] = command_start[name_start + j];
-            }
-            name[name_length] = '\0';
-            const char *value = "";
-            for (size_t j = 0; j < SHELL_SCRIPT_VARIABLES; j++) {
-                if (variables[j].used && text_equals(variables[j].name, name)) {
-                    value = variables[j].value;
-                    break;
-                }
-            }
-            size_t value_length = text_length(value);
-            if (output_length + value_length >= sizeof(expanded)) {
-                write_string("script: expanded command exceeds 80 bytes\n");
-                return;
-            }
-            for (size_t j = 0; j < value_length; j++) {
-                expanded[output_length++] = value[j];
-            }
-            i = name_end;
+        if (!expand_script_text(command_start, variables, expanded)) {
+            write_string("script: expanded command exceeds variable limits\n");
+            return;
         }
-        expanded[output_length] = '\0';
         run_script_line(expanded, variables);
         if (!more) {
             return;
@@ -549,11 +555,64 @@ static void run_script_commands(char *line,
     }
 }
 
+static bool script_condition(char *expression,
+                             struct shell_script_variable *variables,
+                             bool *result) {
+    char expanded[SHELL_LINE_CAPACITY];
+    if (!expand_script_text(skip_spaces(expression), variables, expanded)) {
+        return false;
+    }
+    char *equals = expanded;
+    while (*equals != '\0' && *equals != '=') {
+        equals++;
+    }
+    if (*equals != '=') {
+        return false;
+    }
+    *equals++ = '\0';
+    *result = text_equals(skip_spaces(expanded), skip_spaces(equals));
+    return true;
+}
+
+static bool parse_repeat_count(const char *text, uint32_t *count) {
+    uint32_t value = 0;
+    if (text == 0 || count == 0 || *text == '\0') {
+        return false;
+    }
+    for (; *text != '\0'; text++) {
+        if (*text < '0' || *text > '9') {
+            return false;
+        }
+        value = value * 10 + (uint32_t)(*text - '0');
+        if (value > 16) {
+            return false;
+        }
+    }
+    if (value == 0) {
+        return false;
+    }
+    *count = value;
+    return true;
+}
+
+struct shell_script_control {
+    bool loop;
+    bool parent_active;
+    bool condition;
+    bool else_seen;
+    uint32_t remaining;
+    size_t body_line;
+};
+
 static void run_script(const char *filename) {
     uint64_t packed_base;
     uint64_t packed_extension;
     char contents[SHELL_SCRIPT_CAPACITY];
     struct shell_script_variable variables[SHELL_SCRIPT_VARIABLES];
+    size_t line_offsets[128];
+    uint8_t line_lengths[128];
+    struct shell_script_control controls[8];
+    size_t line_count = 0;
     size_t length = 0;
     uint64_t offset = 0;
     for (size_t i = 0; i < SHELL_SCRIPT_VARIABLES; i++) {
@@ -592,23 +651,106 @@ static void run_script(const char *filename) {
     size_t line_start = 0;
     for (size_t i = 0; i <= length; i++) {
         if (i == length || contents[i] == '\n' || contents[i] == '\r') {
-            char line[SHELL_LINE_CAPACITY];
             size_t line_length = i - line_start;
-            if (line_length >= sizeof(line)) {
-                write_string("script: command exceeds shell line limit\n");
-            } else {
-                for (size_t j = 0; j < line_length; j++) {
-                    line[j] = contents[line_start + j];
-                }
-                line[line_length] = '\0';
-                run_script_commands(line, variables);
+            if (line_length >= SHELL_LINE_CAPACITY
+                || line_count == sizeof(line_offsets) / sizeof(line_offsets[0])) {
+                write_string("script: line or command count limit exceeded\n");
+                return;
             }
+            line_offsets[line_count] = line_start;
+            line_lengths[line_count++] = (uint8_t)line_length;
             if (i < length && contents[i] == '\r' && i + 1 < length
                 && contents[i + 1] == '\n') {
                 i++;
             }
             line_start = i + 1;
         }
+    }
+
+    bool active = true;
+    size_t control_depth = 0;
+    for (size_t line_index = 0; line_index < line_count; line_index++) {
+        char line[SHELL_LINE_CAPACITY];
+        size_t line_length = line_lengths[line_index];
+        for (size_t j = 0; j < line_length; j++) {
+            line[j] = contents[line_offsets[line_index] + j];
+        }
+        line[line_length] = '\0';
+        char *command = skip_spaces(line);
+        if (*command == '\0' || *command == '#') {
+            continue;
+        }
+        if (command_is(command, "if")) {
+            bool condition = false;
+            if (control_depth == sizeof(controls) / sizeof(controls[0])
+                || !script_condition(skip_spaces(command + 2), variables,
+                                     &condition)) {
+                write_string("script: invalid or deeply nested if expression\n");
+                return;
+            }
+            controls[control_depth++] = (struct shell_script_control){
+                .loop = false,
+                .parent_active = active,
+                .condition = condition
+            };
+            active = active && condition;
+            continue;
+        }
+        if (text_equals(command, "else")) {
+            if (control_depth == 0 || controls[control_depth - 1].loop
+                || controls[control_depth - 1].else_seen) {
+                write_string("script: unexpected else\n");
+                return;
+            }
+            struct shell_script_control *frame = &controls[control_depth - 1];
+            frame->else_seen = true;
+            active = frame->parent_active && !frame->condition;
+            continue;
+        }
+        if (text_equals(command, "endif")) {
+            if (control_depth == 0 || controls[control_depth - 1].loop) {
+                write_string("script: unexpected endif\n");
+                return;
+            }
+            active = controls[--control_depth].parent_active;
+            continue;
+        }
+        if (command_is(command, "repeat")) {
+            uint32_t count = 0;
+            if (control_depth == sizeof(controls) / sizeof(controls[0])
+                || !parse_repeat_count(skip_spaces(command + 6), &count)) {
+                write_string("Usage: repeat COUNT (1-16)\n");
+                return;
+            }
+            controls[control_depth++] = (struct shell_script_control){
+                .loop = true,
+                .parent_active = active,
+                .remaining = active ? count : 0,
+                .body_line = line_index + 1
+            };
+            continue;
+        }
+        if (text_equals(command, "endrepeat")) {
+            if (control_depth == 0 || !controls[control_depth - 1].loop) {
+                write_string("script: unexpected endrepeat\n");
+                return;
+            }
+            struct shell_script_control *frame = &controls[control_depth - 1];
+            if (frame->remaining > 1) {
+                frame->remaining--;
+                line_index = frame->body_line - 1;
+            } else {
+                active = frame->parent_active;
+                control_depth--;
+            }
+            continue;
+        }
+        if (active) {
+            run_script_commands(line, variables);
+        }
+    }
+    if (control_depth != 0) {
+        write_string("script: unterminated control block\n");
     }
 }
 
