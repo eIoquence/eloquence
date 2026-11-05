@@ -4,6 +4,7 @@
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"
 #include "process/process.h"
+#include "process/scheduler.h"
 #include "serial.h"
 #include "timer.h"
 #include "system_info.h"
@@ -37,7 +38,6 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
     switch (frame->rax) {
         case ELOQUENCE_SYSCALL_EXIT:
             x86_user_mode_set_exit_status(frame->rdi);
-            kernel_domain_leave();
             return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
         case ELOQUENCE_SYSCALL_CONSOLE_WRITE_CHAR:
             return pack_result(
@@ -120,20 +120,29 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_PROCESS_KILL:
-            if (frame->rdi != kernel_domain_current_id()
-                || !kernel_process_is_running(frame->rdi)) {
+            if (frame->rdi == kernel_domain_current_id()) {
+                x86_user_mode_set_exit_status(137);
+                return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
+            }
+            if (!kernel_scheduler_kill(frame->rdi)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                    0);
             }
-            x86_user_mode_set_exit_status(137);
-            kernel_domain_leave();
-            return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         case ELOQUENCE_SYSCALL_PROCESS_EXEC:
             return pack_result(kernel_system_process_exec(frame->rdi,
                                                            frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
+        case ELOQUENCE_SYSCALL_PROCESS_SPAWN: {
+            uint64_t process_id = kernel_system_process_spawn(frame->rdi,
+                                                              frame->rsi);
+            return pack_result(process_id != 0
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               (uint32_t)process_id);
+        }
         default:
             break;
     }

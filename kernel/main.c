@@ -16,6 +16,7 @@
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
 #include "process/process.h"
+#include "process/scheduler.h"
 #include "paging.h"
 #include "io.h"
 #include "serial.h"
@@ -1039,6 +1040,7 @@ bool kernel_system_process_list(void) {
         serial_write_decimal(process->parent_id);
         serial_write("  ");
         switch (process->state) {
+            case KERNEL_PROCESS_RUNNABLE: serial_write("runnable"); break;
             case KERNEL_PROCESS_BLOCKED: serial_write("blocked"); break;
             case KERNEL_PROCESS_RUNNING: serial_write("running"); break;
             case KERNEL_PROCESS_EXITED: serial_write("exited"); break;
@@ -1114,6 +1116,25 @@ bool kernel_system_process_exec(uint64_t packed_name,
         serial_write("\n");
     }
     return true;
+}
+
+uint64_t kernel_system_process_spawn(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    char short_name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t image_size = 0;
+    uint64_t process_id = 0;
+    uint64_t parent_id = kernel_domain_current_id();
+
+    if (parent_id == KERNEL_DOMAIN_ID
+        || !kernel_scheduler_is_active()
+        || !kernel_process_is_running(parent_id)
+        || !decode_short_name(packed_name, packed_extension, short_name)
+        || !read_fat32_file(0, 1, short_name, &image_size)
+        || !x86_user_elf_spawn(fat32_file_buffer, image_size, parent_id,
+                               &process_id)) {
+        return 0;
+    }
+    return process_id;
 }
 
 static bool parse_short_name(const char *text, char *name, size_t capacity) {

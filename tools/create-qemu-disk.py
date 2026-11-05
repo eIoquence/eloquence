@@ -80,6 +80,22 @@ def make_hello_elf() -> bytes:
     return header + program_header + code
 
 
+def make_spin_elf() -> bytes:
+    code = bytes.fromhex("f390ebfc")
+    entry = 0x400000 + ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF" + bytes((2, 1, 1, 0)) + bytes(8),
+        2, 62, 1, entry, ELF64_HEADER_SIZE, 0, 0, 64, 56, 1, 0, 0, 0,
+    )
+    program_header = struct.pack(
+        "<IIQQQQQQ",
+        1, 5, ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE,
+        entry, 0, len(code), len(code), 16,
+    )
+    return header + program_header + code
+
+
 def make_fat32_volume(
     total_sectors: int, volume_start: int, shell_size: int
 ) -> tuple[bytes, bytes, bytes, int]:
@@ -91,7 +107,7 @@ def make_fat32_volume(
     if cluster_count < 65525:
         raise ValueError("partition is too small for a FAT32 test volume")
     shell_cluster_count = math.ceil(shell_size / SECTOR_SIZE)
-    if shell_cluster_count == 0 or shell_cluster_count + 3 >= cluster_count:
+    if shell_cluster_count == 0 or shell_cluster_count + 4 >= cluster_count:
         raise ValueError("invalid shell image size for FAT32 test volume")
 
     boot = bytearray(SECTOR_SIZE)
@@ -125,8 +141,8 @@ def make_fat32_volume(
     fs_info = bytearray(SECTOR_SIZE)
     put_u32(fs_info, 0, 0x41615252)
     put_u32(fs_info, 484, 0x61417272)
-    put_u32(fs_info, 488, cluster_count - 3 - shell_cluster_count)
-    put_u32(fs_info, 492, 5 + shell_cluster_count)
+    put_u32(fs_info, 488, cluster_count - 4 - shell_cluster_count)
+    put_u32(fs_info, 492, 6 + shell_cluster_count)
     put_u32(fs_info, 508, 0xAA550000)
 
     fat = bytearray(fat_sectors * SECTOR_SIZE)
@@ -139,6 +155,7 @@ def make_fat32_volume(
         cluster = 5 + index
         next_cluster = cluster + 1 if index + 1 < shell_cluster_count else 0x0FFFFFFF
         put_u32(fat, cluster * 4, next_cluster)
+    put_u32(fat, (5 + shell_cluster_count) * 4, 0x0FFFFFFF)
     return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT)
 
 
@@ -180,6 +197,7 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         partition_sectors, PARTITION_START, len(shell_elf)
     )
     hello_elf = make_hello_elf()
+    spin_elf = make_spin_elf()
 
     mode = "wb" if force else "xb"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -238,6 +256,12 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         put_u16(root, 84, 0)
         put_u16(root, 90, 5)
         put_u32(root, 92, len(shell_elf))
+        root[96:107] = b"SPIN    ELF"
+        root[107] = 0x20
+        spin_cluster = 5 + math.ceil(len(shell_elf) / SECTOR_SIZE)
+        put_u16(root, 116, 0)
+        put_u16(root, 122, spin_cluster)
+        put_u32(root, 124, len(spin_elf))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
@@ -247,6 +271,8 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
             cluster = 5 + index
             image.seek((data_start + cluster - 2) * SECTOR_SIZE)
             image.write(shell_elf[offset : offset + SECTOR_SIZE])
+        image.seek((data_start + spin_cluster - 2) * SECTOR_SIZE)
+        image.write(spin_elf)
 
 
 def main() -> None:

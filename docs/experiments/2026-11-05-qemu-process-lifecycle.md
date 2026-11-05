@@ -20,9 +20,22 @@
   its `ps` showed PID 3 blocked, PID 4 exited, PID 5 running, and nested
   `HELLO.ELF` as PID 6 with PPID 5. Exiting PID 5 restored PID 3; the parent's
   next `ps` showed it running and both child records exited.
+- `spawn HELLO.ELF` returned PID 4 while the parent shell continued. The child
+  printed its message and exited with status 42; `ps` retained its exit record.
+- `spawn SPIN.ELF` launched a CPU-bound infinite loop as PID 5. The timer
+  preempted it and resumed the interactive shell; `ps` showed PID 5 runnable
+  with increasing runtime ticks while PID 3 remained running. `kill 5` stopped
+  and reaped it with status 137, and the shell remained usable. A second run
+  confirmed successful `kill` returns quietly and the PID appears exited.
+- Nested synchronous `exec HELLO.ELF` also returned correctly while the timer
+  scheduler was active.
+- Exiting the root shell while a spawned worker remained active returned to
+  the kernel monitor; the scheduler marked and reaped the remaining task.
 
 The kernel keeps the 16 most recent process records. PID allocation is
-monotonic within a boot. This demonstrates bookkeeping, self-exit, and
-synchronous nested `exec`, not a scheduler: only one user process runs at a
-time, and timer interrupts do not switch address spaces. `wait`, background
-jobs, and termination of another process remain unimplemented.
+monotonic within a boot. The 100 Hz x86-64 timer saves the user register and
+iret frame, rotates runnable processes, switches CR3 and the per-process
+kernel stack, then restores the selected context. `wait`, pipes, and IPC remain
+unimplemented. The scheduler is single-CPU and fixed-capacity; the initial
+root process owns its spawned task tree and tears it down on exit. Runtime
+behavior was verified only under this QEMU TCG configuration.

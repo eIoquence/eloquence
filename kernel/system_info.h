@@ -24,5 +24,7 @@ bool kernel_system_directory_create(uint64_t packed_name,
 bool kernel_system_process_list(void);
 bool kernel_system_process_exec(uint64_t packed_name,
                                uint64_t packed_extension);
+uint64_t kernel_system_process_spawn(uint64_t packed_name,
+                                    uint64_t packed_extension);
 
 #endif

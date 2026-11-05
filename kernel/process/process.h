@@ -8,6 +8,7 @@
 
 enum kernel_process_state {
     KERNEL_PROCESS_UNUSED,
+    KERNEL_PROCESS_RUNNABLE,
     KERNEL_PROCESS_BLOCKED,
     KERNEL_PROCESS_RUNNING,
     KERNEL_PROCESS_EXITED,
@@ -26,6 +27,7 @@ struct kernel_process_info {
 
 uint64_t kernel_process_start(uint64_t process_id, uint64_t parent_id,
                               uint64_t tick);
+bool kernel_process_set_runnable(uint64_t process_id, bool running);
 bool kernel_process_set_blocked(uint64_t process_id, bool blocked,
                                 uint64_t tick);
 bool kernel_process_finish(uint64_t process_id, uint64_t tick,
@@ -33,5 +35,7 @@ bool kernel_process_finish(uint64_t process_id, uint64_t tick,
 uint32_t kernel_process_snapshot(struct kernel_process_info *entries,
                                  uint32_t capacity);
 bool kernel_process_is_running(uint64_t process_id);
+bool kernel_process_get(uint64_t process_id,
+                        struct kernel_process_info *process);
 
 #endif

@@ -2,10 +2,10 @@
 
 **Status:** Prototype; not a stable application ABI
 
-This ABI exists to test a real privilege boundary for the initial MMIO
-capability experiment. It is single-CPU, synchronous, and intentionally accepts
-only scalar values. It has no user pointers, scheduling, IPC, or compatibility
-guarantee.
+This ABI began as the privilege boundary for the MMIO capability experiment.
+It is a single-CPU prototype, intentionally accepts only scalar values, and
+supports a 100 Hz round-robin scheduler for user processes. It has no user
+pointers, IPC, or compatibility guarantee.
 
 ## Register contract
 
@@ -48,6 +48,7 @@ accepts a domain ID.
 | 19 | `PROCESS_LIST` | None | `RAX[63:32]`: result code; prints the bounded process history |
 | 20 | `PROCESS_KILL` | `RDI`: process ID | Terminates the caller with status 137 only when the ID is the caller's current process ID |
 | 21 | `PROCESS_EXEC` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads and runs a static ELF from the FAT32 root synchronously as a child |
+| 22 | `PROCESS_SPAWN` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads a static ELF as a runnable child; low 32 bits of `RAX` contain its PID |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -75,12 +76,13 @@ traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
 replaces it on commit.
 
 `PROCESS_LIST` reports up to 16 most recent process records, including PID,
-parent PID, state, exit status, and runtime ticks. `PROCESS_KILL` currently
-accepts only the running caller. `PROCESS_EXEC` blocks its caller until the
-child exits, then resumes it. Child execution uses a separate address space
-and kernel syscall stack, with nesting bounded to eight user contexts. This is
-synchronous parent/child execution, not concurrent process scheduling;
-cross-process termination and timer preemption remain unimplemented.
+parent PID, state, exit status, and runtime ticks. `PROCESS_KILL` accepts the
+caller or another live scheduler-managed process. `PROCESS_EXEC` blocks its
+caller until the child exits, then resumes it. `PROCESS_SPAWN` creates a
+separate address space and kernel syscall stack and returns immediately. The
+x86-64 scheduler uses the 100 Hz timer for round-robin preemption. This remains
+a single-CPU prototype with a fixed process limit; there is no `wait`, IPC,
+SMP scheduling, or stable syscall compatibility guarantee.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

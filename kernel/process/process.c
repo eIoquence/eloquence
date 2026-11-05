@@ -37,11 +37,25 @@ uint64_t kernel_process_start(uint64_t process_id, uint64_t parent_id,
     return process_id;
 }
 
+bool kernel_process_set_runnable(uint64_t process_id, bool running) {
+    for (uint32_t i = 0; i < process_count; i++) {
+        if (processes[i].process_id == process_id
+            && (processes[i].state == KERNEL_PROCESS_RUNNING
+                || processes[i].state == KERNEL_PROCESS_RUNNABLE)) {
+            processes[i].state = running ? KERNEL_PROCESS_RUNNING
+                                         : KERNEL_PROCESS_RUNNABLE;
+            return true;
+        }
+    }
+    return false;
+}
+
 bool kernel_process_set_blocked(uint64_t process_id, bool blocked,
                                 uint64_t tick) {
     for (uint32_t i = 0; i < process_count; i++) {
         if (processes[i].process_id == process_id
             && (processes[i].state == KERNEL_PROCESS_RUNNING
+                || processes[i].state == KERNEL_PROCESS_RUNNABLE
                 || processes[i].state == KERNEL_PROCESS_BLOCKED)) {
             processes[i].state = blocked ? KERNEL_PROCESS_BLOCKED
                                          : KERNEL_PROCESS_RUNNING;
@@ -59,6 +73,7 @@ bool kernel_process_finish(uint64_t process_id, uint64_t tick,
     for (uint32_t i = 0; i < process_count; i++) {
         if (processes[i].process_id == process_id
             && (processes[i].state == KERNEL_PROCESS_RUNNING
+                || processes[i].state == KERNEL_PROCESS_RUNNABLE
                 || processes[i].state == KERNEL_PROCESS_BLOCKED)) {
             processes[i].finished_at_tick = tick;
             processes[i].exit_status = exit_status;
@@ -86,7 +101,22 @@ bool kernel_process_is_running(uint64_t process_id) {
     for (uint32_t i = 0; i < process_count; i++) {
         if (processes[i].process_id == process_id
             && (processes[i].state == KERNEL_PROCESS_RUNNING
-                || processes[i].state == KERNEL_PROCESS_BLOCKED)) {
+                || processes[i].state == KERNEL_PROCESS_BLOCKED
+                || processes[i].state == KERNEL_PROCESS_RUNNABLE)) {
+            return true;
+        }
+    }
+    return false;
+}
+
+bool kernel_process_get(uint64_t process_id,
+                        struct kernel_process_info *process) {
+    if (process == 0) {
+        return false;
+    }
+    for (uint32_t i = 0; i < process_count; i++) {
+        if (processes[i].process_id == process_id) {
+            *process = processes[i];
             return true;
         }
     }

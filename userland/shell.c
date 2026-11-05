@@ -191,7 +191,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
-        "ps", "kill", "exec", "about", "exit"
+        "ps", "kill", "exec", "spawn", "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -327,7 +327,7 @@ __attribute__((noreturn)) void _start(void) {
             }
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, exec FILE.ELF, kill PID, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, exec FILE.ELF, spawn FILE.ELF, kill PID, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -397,7 +397,7 @@ __attribute__((noreturn)) void _start(void) {
                                                process_id, 0, 0);
                 if ((uint32_t)(result >> 32)
                     != ELOQUENCE_SYSCALL_RESULT_OK) {
-                    write_string("kill: PID must be the current process\n");
+                    write_string("kill: no live process with that PID\n");
                 }
             }
         } else if (command_is(line, "exec")) {
@@ -416,6 +416,28 @@ __attribute__((noreturn)) void _start(void) {
                 if ((uint32_t)(result >> 32)
                     != ELOQUENCE_SYSCALL_RESULT_OK) {
                     write_string("exec: failed\n");
+                }
+            }
+        } else if (command_is(line, "spawn")) {
+            const char *filename = line + 5;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string("Usage: spawn SHORTNAME.ELF\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_PROCESS_SPAWN,
+                                               packed_base,
+                                               packed_extension, 0);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("spawn: failed\n");
+                } else {
+                    write_string("Spawned process ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
                 }
             }
         } else if (text_equals(line, "ls")) {

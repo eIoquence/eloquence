@@ -3,11 +3,12 @@
 
 #include <stdbool.h>
 #include <stdint.h>
+#include <stdint.h>
 
 #define X86_TIMER_FREQUENCY_HZ 100U
 
 bool x86_timer_initialize(void);
-void x86_timer_interrupt(void);
+uint64_t *x86_timer_interrupt(uint64_t *context);
 uint64_t x86_timer_ticks(void);
 bool x86_timer_uses_local_apic(void);
 

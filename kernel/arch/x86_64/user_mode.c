@@ -297,6 +297,22 @@ uint64_t x86_user_mode_fault_exit(uint64_t vector) {
     user_exit_status = vector;
     user_fault_occurred = true;
     user_exit_occurred = true;
-    kernel_domain_leave();
     return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
+}
+
+uint64_t x86_user_mode_exit_status(void) {
+    return user_exit_status;
+}
+
+bool x86_user_mode_exit_faulted(void) {
+    return user_fault_occurred;
+}
+
+void x86_user_mode_switch_to(uint64_t address_space,
+                             uint64_t kernel_stack_top,
+                             uint64_t process_id) {
+    syscall_state.kernel_stack_pointer = kernel_stack_top;
+    tss.rsp0 = kernel_stack_top;
+    kernel_domain_enter(process_id);
+    __asm__ volatile ("mov %0, %%cr3" : : "r"(address_space) : "memory");
 }

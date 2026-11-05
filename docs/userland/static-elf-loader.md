@@ -18,13 +18,16 @@ regions, malformed offsets, and non-executable entry points. It maps each
 segment using its ELF read/write/execute flags and invokes the existing `EXIT`
 syscall to return a status. CPU exceptions are reported as process faults.
 
-The image reader is capped at 4 KiB, the process is single-threaded and
-synchronous, and the syscall ABI is still experimental. Address-space page
-tables remain allocated for reuse; loaded code and stack frames are unmapped and
-reclaimed after exit. There is no scheduler, dynamic linker, argument vector,
-or general-purpose process management yet. User programs can read one serial
-character non-blockingly and emit individual validated ASCII characters
-through the experimental ABI.
+The image reader is capped at 4 KiB, ELF images are limited to 16 mapped pages,
+and the syscall ABI is still experimental. The shell's `exec` command runs a
+synchronous child; `spawn` creates a runnable process that is preempted by the
+100 Hz x86-64 timer. Processes have separate address spaces and kernel stacks;
+`ps` lists recent lifecycle records and `kill` can terminate the current or
+another scheduled process. Address-space page tables remain allocated for
+reuse; loaded code and stack frames are unmapped and reclaimed after exit.
+`wait`, a dynamic linker, argument vectors, IPC, and SMP scheduling are absent.
+User programs can read one serial character non-blockingly and emit individual
+validated ASCII characters through the experimental ABI.
 
 The QEMU disk fixture includes `HELLO.ELF`, which prints a short greeting and
 exits with status 42, and `SHELL.ELF`, a minimal interactive ring-3 shell. See

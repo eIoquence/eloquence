@@ -76,7 +76,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/arch/x86_64/timer.o build/arch/x86_64/timer_irq.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
-	build/process/process.o \
+	build/process/process.o build/process/scheduler.o \
 	build/lib/memory.o build/memory/page_allocator.o \
 	build/storage/block_device.o build/storage/gpt.o build/storage/fat32.o \
 	build/storage/vfs.o \

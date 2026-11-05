@@ -39,16 +39,19 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    checked before reading its MSR; IMCR routing is selected where available,
    while QEMU q35 retained firmware routing and still delivered ticks. x2APIC
    is not yet supported.
-4. Bounded static ELF loading from FAT32 and synchronous ring-3 launch/exit.
-   **Partially implemented:** `HELLO.ELF` runs in ring 3 and returns status 42;
-   loaded code/stack pages are reclaimed. Scheduler, dynamic linking, and page
-   table teardown remain open.
-5. VirtIO Block, primary/backup GPT handling, and read-only FAT32 access.
-   **Partially implemented:** VirtIO legacy PCI block, primary GPT, FAT32 root
-   listing, and bounded short-name file reads behind a single-root VFS,
-   exposed through shell `ls`, `cat`, and `stat`. `pwd` reports `/`; `cd /` is
-   accepted. Multiple mounts, subdirectories, backup GPT recovery, and all
-   filesystem writes remain open.
+4. Bounded static ELF loading from FAT32, process lifecycle, and scheduling.
+   **Implemented for the x86-64 QEMU slice:** separate address spaces and
+   kernel stacks, synchronous `exec`, asynchronous `spawn`, `ps`, cross-process
+   `kill`, and 100 Hz timer-driven round-robin preemption. `SPIN.ELF` was
+   preempted while the shell remained responsive. `wait`, IPC, and SMP remain
+   open.
+5. VirtIO Block, GPT, and FAT32 access.
+   **Partially implemented:** VirtIO legacy PCI block, primary GPT, and a
+   single-root VFS with bounded FAT32 create/write/delete and directory
+   creation. Shell `ls`, `cat`, `stat`, `touch`, `rm`, `mkdir`, and
+   `echo TEXT > FILE` use kernel-mediated operations. Multiple mounts,
+   subdirectory path traversal, backup GPT recovery, and journaling remain
+   open.
 6. Minimal user-facing console ABI.
    **Partially implemented:** ring-3 programs can read one serial character
    non-blockingly and write validated ASCII one character per syscall. A
@@ -57,9 +60,9 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    `devinfo`, `irqinfo`, and `bootinfo` reports through scalar requests.
    Backspace/Ctrl-U editing, one-command history, and unique built-in Tab
    completion work. The ABI remains experimental; buffering, a full parser,
-   and filesystem commands remain open.
-7. Scheduler and IPC, then isolated device services, network, and
-   multi-architecture runtime work.
+   and contextual path operations remain open.
+7. Bounded pipes and shell scripting, then IPC, isolated device services,
+   networking, and multi-architecture runtime work.
 
 QEMU and related host tooling are introduced at milestone 2. Every milestone
 keeps compile, boot, and functional claims separate and records known limits.
