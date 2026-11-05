@@ -55,7 +55,7 @@ struct limine_page_allocator_context {
 static struct limine_page_allocator_context page_allocator_context;
 static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
 static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
-static uint8_t fat32_file_buffer[4096];
+static uint8_t fat32_file_buffer[16384];
 static uint64_t pci_functions_found;
 
 __attribute__((used, section(".limine_requests")))
@@ -668,6 +668,110 @@ static void report_fat32_file(uint64_t device_index,
     if (bytes_read == 0 || fat32_file_buffer[bytes_read - 1] != '\n') {
         serial_write("\n");
     }
+}
+
+static bool valid_short_name_character(char value) {
+    return (value >= 'A' && value <= 'Z')
+        || (value >= '0' && value <= '9')
+        || value == '_' || value == '-' || value == '$' || value == '~';
+}
+
+static bool decode_short_name(uint64_t packed_base, uint64_t packed_extension,
+                              char name[FAT32_SHORT_NAME_LENGTH]) {
+    size_t length = 0;
+    bool ended = false;
+
+    if (packed_base == 0 || (packed_extension >> 24) != 0) {
+        return false;
+    }
+    for (size_t i = 0; i < 8; i++) {
+        char value = (char)(packed_base >> (i * 8));
+        if (value == '\0') {
+            ended = true;
+            continue;
+        }
+        if (ended || !valid_short_name_character(value)) {
+            return false;
+        }
+        name[length++] = value;
+    }
+    if (length == 0) {
+        return false;
+    }
+    if (packed_extension != 0) {
+        name[length++] = '.';
+        ended = false;
+        for (size_t i = 0; i < 3; i++) {
+            char value = (char)(packed_extension >> (i * 8));
+            if (value == '\0') {
+                ended = true;
+                continue;
+            }
+            if (ended || !valid_short_name_character(value)) {
+                return false;
+            }
+            name[length++] = value;
+        }
+        if (name[length - 1] == '.') {
+            return false;
+        }
+    }
+    name[length] = '\0';
+    return true;
+}
+
+bool kernel_system_file_list(uint64_t device_index,
+                             uint64_t partition_number) {
+    if (device_index >= block_device_count() || partition_number == 0) {
+        return false;
+    }
+    report_fat32_root(device_index, partition_number);
+    return true;
+}
+
+bool kernel_system_file_cat(uint64_t packed_name,
+                            uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!decode_short_name(packed_name, packed_extension, name)) {
+        return false;
+    }
+    report_fat32_file(0, 1, name);
+    return true;
+}
+
+bool kernel_system_file_stat(uint64_t packed_name,
+                             uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    struct fat32_volume volume;
+    uint32_t entry_count = 0;
+
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !mount_fat32(0, 1, &volume)) {
+        return false;
+    }
+    enum fat32_result result = fat32_list_root(
+        &volume, fat32_entries, FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    if (result != FAT32_OK) {
+        serial_write("FAT32 directory read failed: ");
+        serial_write(fat32_result_name(result));
+        serial_write("\n");
+        return true;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (text_equals(fat32_entries[i].short_name, name)) {
+            serial_write("Name: ");
+            serial_write(name);
+            serial_write("\nType: ");
+            serial_write((fat32_entries[i].attributes & 0x10U) != 0
+                             ? "directory\n" : "file\n");
+            serial_write("Size: ");
+            serial_write_decimal(fat32_entries[i].size);
+            serial_write(" bytes\n");
+            return true;
+        }
+    }
+    serial_write("File not found\n");
+    return true;
 }
 
 static void run_fat32_elf(uint64_t device_index,

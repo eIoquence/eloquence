@@ -147,8 +147,8 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; pass --force to replace it")
-    if not shell_elf or len(shell_elf) > 4096:
-        raise ValueError("the shell ELF must be between 1 and 4096 bytes")
+    if not shell_elf:
+        raise ValueError("the shell ELF must not be empty")
 
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     backup_header_lba = total_sectors - 1

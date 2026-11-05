@@ -35,6 +35,9 @@ accepts a domain ID.
 | 6 | `CONSOLE_CLEAR` | None | `RAX[63:32]`: result code |
 | 7 | `UPTIME_TICKS` | None | `RAX`: monotonic timer ticks since timer initialization |
 | 8 | `SYSTEM_REPORT` | `RDI`: report selector from `syscall_abi.h` | `RAX[63:32]`: result code; report text is formatted by the kernel |
+| 9 | `FS_LIST` | `RDI`: block device index, `RSI`: GPT partition number | `RAX[63:32]`: result code; prints the FAT32 root directory |
+| 10 | `FS_CAT` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | `RAX[63:32]`: result code; prints a FAT32 root file |
+| 11 | `FS_STAT` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | `RAX[63:32]`: result code; prints root-file metadata |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -52,6 +55,9 @@ and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
 kernel-owned snapshots; it never accepts user pointers. The report interface
 is experimental and currently covers system, usable-memory, architecture,
 device, timer/IRQ, and bootloader summaries.
+`FS_LIST`, `FS_CAT`, and `FS_STAT` are read-only and currently expose only the
+FAT32 root. `FS_CAT` and `FS_STAT` accept validated ASCII 8.3 names and target
+device 0, partition 1.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

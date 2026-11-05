@@ -54,6 +54,56 @@ static void system_report(uint64_t report) {
     (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_REPORT, report, 0, 0);
 }
 
+static bool pack_filename(const char *text, uint64_t *base,
+                          uint64_t *extension) {
+    size_t base_length = 0;
+    size_t extension_length = 0;
+    bool in_extension = false;
+    uint64_t packed_base = 0;
+    uint64_t packed_extension = 0;
+
+    if (*text == '\0') {
+        return false;
+    }
+    for (; *text != '\0'; text++) {
+        char value = *text;
+        if (value == '.') {
+            if (in_extension || base_length == 0) {
+                return false;
+            }
+            in_extension = true;
+            continue;
+        }
+        if (value >= 'a' && value <= 'z') {
+            value = (char)(value - 'a' + 'A');
+        }
+        if (!((value >= 'A' && value <= 'Z')
+              || (value >= '0' && value <= '9') || value == '_'
+              || value == '-' || value == '$' || value == '~')) {
+            return false;
+        }
+        if (in_extension) {
+            if (++extension_length > 3) {
+                return false;
+            }
+            packed_extension |= (uint64_t)(uint8_t)value
+                                << ((extension_length - 1) * 8);
+        } else {
+            if (++base_length > 8) {
+                return false;
+            }
+            packed_base |= (uint64_t)(uint8_t)value
+                           << ((base_length - 1) * 8);
+        }
+    }
+    if (base_length == 0 || (in_extension && extension_length == 0)) {
+        return false;
+    }
+    *base = packed_base;
+    *extension = packed_extension;
+    return true;
+}
+
 static bool command_is(const char *line, const char *name) {
     while (*name != '\0' && *line == *name) {
         line++;
@@ -97,7 +147,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
     static const char *const commands[] = {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
-        "bootinfo", "about", "exit"
+        "bootinfo", "ls", "cat", "stat", "pwd", "cd", "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -217,7 +267,7 @@ __attribute__((noreturn)) void _start(void) {
             }
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, pwd, cd /, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -251,6 +301,44 @@ __attribute__((noreturn)) void _start(void) {
             system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
         } else if (text_equals(line, "bootinfo")) {
             system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+        } else if (text_equals(line, "ls")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_LIST, 0, 1, 0);
+        } else if (text_equals(line, "pwd")) {
+            write_string("/\n");
+        } else if (text_equals(line, "cd /")) {
+            write_string("/\n");
+        } else if (command_is(line, "cd")) {
+            write_string("Only the root directory is available.\n");
+        } else if (command_is(line, "cat")) {
+            const char *filename = line + 3;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+            write_string("Usage: cat SHORTNAME.EXT (FAT 8.3 format)\n");
+            } else {
+                (void)user_syscall(ELOQUENCE_SYSCALL_FS_CAT, packed_base,
+                                   packed_extension, 0);
+            }
+        } else if (command_is(line, "stat")) {
+            const char *filename = line + 4;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string("Usage: stat SHORTNAME.EXT (FAT 8.3 format)\n");
+            } else {
+                (void)user_syscall(ELOQUENCE_SYSCALL_FS_STAT, packed_base,
+                                   packed_extension, 0);
+            }
+        } else if (command_is(line, "mkdir") || command_is(line, "touch")
+                   || command_is(line, "rm") || command_is(line, "cp")
+                   || command_is(line, "mv")) {
+            write_string("FAT32 is mounted read-only.\n");
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {

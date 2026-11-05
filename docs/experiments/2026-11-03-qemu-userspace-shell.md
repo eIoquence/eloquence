@@ -49,4 +49,8 @@ usable physical memory and explicitly does not claim it is free memory. The
 generated QEMU FAT32 fixture is refreshed by each `make run` so shell changes
 are not silently tested against a stale disk image. Unique built-in prefixes
 complete with Tab, and the Up arrow recalls the previous non-empty command;
-both behaviors were exercised in QEMU.
+both behaviors were exercised in QEMU. `ls`, `cat HELLO.TXT`, and `pwd` also
+worked through kernel-mediated, read-only FAT32 access. `cat` accepts bounded
+8.3 names, and `stat` reports root entry type and size. `pwd` works at `/`;
+`cd` only confirms the root because there are no subdirectories in the shell
+interface yet. There is no VFS or write support.

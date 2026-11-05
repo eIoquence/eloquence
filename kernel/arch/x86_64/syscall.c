@@ -62,6 +62,21 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
+        case ELOQUENCE_SYSCALL_FS_LIST:
+            return pack_result(kernel_system_file_list(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_CAT:
+            return pack_result(kernel_system_file_cat(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_STAT:
+            return pack_result(kernel_system_file_stat(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
         default:
             break;
     }
