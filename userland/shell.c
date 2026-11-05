@@ -1000,6 +1000,20 @@ __attribute__((noreturn)) void _start(void) {
     char line[SHELL_LINE_CAPACITY];
     char history[8][SHELL_LINE_CAPACITY];
     for (size_t hi = 0; hi < 8; hi++) history[hi][0] = '\0';
+    /* Eloquence-branded aliases */
+    const char *names[] = {"print", "list", "show", "time", "info", "memory", "devices"};
+    const char *vals[] = {"echo", "ls", "cat", "uptime", "sysinfo", "meminfo", "devinfo"};
+    for (size_t i = 0; i < 7; i++) {
+        size_t slot = shell_alias_count++;
+        for (size_t j = 0; names[i][j] != '\0' && j + 1 < 16; j++) {
+            shell_alias_names[slot][j] = names[i][j];
+            shell_alias_names[slot][j + 1] = '\0';
+        }
+        for (size_t j = 0; vals[i][j] != '\0' && j + 1 < 64; j++) {
+            shell_alias_values[slot][j] = vals[i][j];
+            shell_alias_values[slot][j + 1] = '\0';
+        }
+    }
     size_t history_count = 0;
     size_t history_pos = 0;
     char current_path[128] = "/";
