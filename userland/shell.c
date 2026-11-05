@@ -10,6 +10,10 @@
 #define SHELL_SCRIPT_VARIABLES 8U
 #define TIMER_FREQUENCY_HZ 100U
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
+#define SHELL_ENV_CAPACITY 8U
+static char shell_env_names[SHELL_ENV_CAPACITY][16];
+static char shell_env_values[SHELL_ENV_CAPACITY][64];
+static size_t shell_env_count = 0;
 
 static inline uint64_t user_syscall(uint64_t number, uint64_t argument0,
                                     uint64_t argument1, uint64_t argument2) {
@@ -195,7 +199,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
-        "about", "exit", "reboot", "shutdown"
+        "about", "exit", "reboot", "shutdown", "env", "export"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -969,7 +973,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1232,6 +1236,40 @@ __attribute__((noreturn)) void _start(void) {
         } else if (text_equals(line, "shutdown")) {
             write_string("Shutting down...\n");
             (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
+        } else if (text_equals(line, "env")) {
+            for (size_t i = 0; i < shell_env_count; i++) {
+                write_string(shell_env_names[i]);
+                write_char('=');
+                write_string(shell_env_values[i]);
+                write_char('\n');
+            }
+        } else if (command_is(line, "export")) {
+            char *cursor = line + 6;
+            char *name = cursor;
+            char *value;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t' && *cursor != '=') {
+                cursor++;
+            }
+            while (*cursor == ' ' || *cursor == '\t') {
+                *cursor++ = '\0';
+            }
+            if (*cursor == '=') {
+                *cursor++ = '\0';
+            }
+            value = cursor;
+            if (name[0] == '\0' || shell_env_count >= SHELL_ENV_CAPACITY) {
+                write_string("Usage: export NAME=VALUE\n");
+            } else {
+                size_t slot = shell_env_count++;
+                for (size_t i = 0; name[i] != '\0' && i + 1 < 16; i++) {
+                    shell_env_names[slot][i] = name[i];
+                    shell_env_names[slot][i + 1] = '\0';
+                }
+                for (size_t i = 0; value[i] != '\0' && i + 1 < 64; i++) {
+                    shell_env_values[slot][i] = value[i];
+                    shell_env_values[slot][i + 1] = '\0';
+                }
+            }
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {
