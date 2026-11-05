@@ -3,7 +3,7 @@
 #include <stdint.h>
 
 #include "arch/x86_64/paging.h"
-#include "arch/x86_64/syscall_abi.h"
+#include "eloquence/syscall_abi.h"
 #include "arch/x86_64/user_mode.h"
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"

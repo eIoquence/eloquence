@@ -32,6 +32,18 @@ void serial_write(const char *text) {
     }
 }
 
+bool serial_write_user_char(uint64_t value) {
+    if (value > 0x7f || (value < 0x20 && value != '\b' && value != '\n'
+                         && value != '\r' && value != '\t')) {
+        return false;
+    }
+    if (value == '\n') {
+        serial_write_byte('\r');
+    }
+    serial_write_byte((char)value);
+    return true;
+}
+
 bool serial_try_read_char(char *value) {
     if (value == 0 || (x86_inb(COM1_BASE + 5) & 0x01) == 0) {
         return false;

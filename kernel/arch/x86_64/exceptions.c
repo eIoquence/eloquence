@@ -3,6 +3,9 @@
 #include "domain/domain.h"
 #include "exceptions.h"
 #include "serial.h"
+#include "process/process.h"
+#include "process/scheduler.h"
+#include "timer.h"
 #include "user_mode.h"
 
 struct idt_gate {
@@ -178,6 +181,10 @@ uint64_t x86_exception_dispatch(const struct x86_exception_frame *frame) {
     if ((frame->code_segment & 3) == 3
         && kernel_domain_current_id() != KERNEL_DOMAIN_ID) {
         serial_write("Terminating user domain after exception\n");
+        if (kernel_scheduler_has_process(kernel_domain_current_id())) {
+            (void)kernel_process_finish(kernel_domain_current_id(),
+                                        x86_timer_ticks(), vector, true);
+        }
         return x86_user_mode_fault_exit(vector);
     }
 

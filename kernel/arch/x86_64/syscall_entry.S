@@ -41,11 +41,23 @@ x86_syscall_entry:
 
 .Lreturn_to_kernel:
     swapgs
-    jmp .Lrestore_kernel_context
+    subq $8, %rsp
+    call kernel_scheduler_on_exit
+    addq $8, %rsp
+    testq %rax, %rax
+    jz .Lrestore_kernel_context
+    movq %rax, %rsp
+    jmp .Lrestore_user_context
 
 .global x86_user_exception_return
 x86_user_exception_return:
     swapgs
+    call kernel_scheduler_on_exit
+    testq %rax, %rax
+    jz .Lrestore_kernel_context
+    movq %rax, %rsp
+    jmp .Lrestore_user_context
+
 .Lrestore_kernel_context:
     movq x86_user_kernel_cr3(%rip), %rax
     movq %rax, %cr3
@@ -57,6 +69,25 @@ x86_user_exception_return:
     popq %rbx
     popq %rbp
     retq
+
+.Lrestore_user_context:
+    popq %r15
+    popq %r14
+    popq %r13
+    popq %r12
+    popq %r11
+    popq %r10
+    popq %r9
+    popq %r8
+    popq %rdi
+    popq %rsi
+    popq %rbp
+    popq %rdx
+    popq %rcx
+    popq %rbx
+    popq %rax
+    iretq
+
 .size x86_syscall_entry, .-x86_syscall_entry
 
 .global x86_user_enter_asm
@@ -70,6 +101,7 @@ x86_user_enter_asm:
     pushq %r15
     movq %rsp, x86_user_return_stack(%rip)
 
+    movq %r9, %r11
     movq %rdi, %r9
     movq %rsi, %r10
     movq %rdx, %rdi
@@ -78,9 +110,13 @@ x86_user_enter_asm:
 
     pushq $0x1b
     pushq %r10
-    pushq $0x002
+    pushq %r11
     pushq $0x23
     pushq %r9
+    cmpb $0, x86_user_entry_nested(%rip)
+    je 1f
+    swapgs
+1:
     iretq
 .size x86_user_enter_asm, .-x86_user_enter_asm
 

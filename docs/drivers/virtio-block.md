@@ -15,9 +15,10 @@ static buffers. The driver does not configure an IOMMU, handle device
 interrupts, or support modern VirtIO PCI capabilities; only the QEMU
 transitional interface is covered.
 
-`make run` attaches `build/eloquence-userland.raw` as a legacy VirtIO block device.
+`make run` attaches `build/eloquence-shell.raw` as a legacy VirtIO block device.
 When the file is absent, `tools/create-qemu-disk.py` creates a 64 MiB disposable
-GPT disk with a FAT32 fixture containing `HELLO.TXT` and `HELLO.ELF`. Existing
-disk files are left in place. Set `QEMU_DISK` to use another image.
+GPT disk with a FAT32 fixture containing `HELLO.TXT`, `HELLO.ELF`, and
+`SHELL.ELF`. Existing disk files are left in place. Set `QEMU_DISK` to use
+another image.
 
 See the [QEMU storage and filesystem run](../experiments/2026-11-03-qemu-storage-fs.md).

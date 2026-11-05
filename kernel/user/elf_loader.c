@@ -5,7 +5,10 @@
 #include "arch/x86_64/paging.h"
 #include "arch/x86_64/user_mode.h"
 #include "domain/domain.h"
+#include "process/process.h"
+#include "process/scheduler.h"
 #include "memory/page_allocator.h"
+#include "arch/x86_64/timer.h"
 #include "elf_loader.h"
 
 #define ELF64_HEADER_SIZE 64U
@@ -22,10 +25,11 @@
 #define PAGE_MASK (PAGE_SIZE - 1)
 #define USER_MIN_ADDRESS 0x0000000000010000ULL
 #define USER_STACK_BASE 0x00007fffffffd000ULL
-#define USER_STACK_POINTER 0x00007fffffffeff0ULL
+#define USER_STACK_POINTER 0x00007fffffffeff8ULL
 #define USER_STACK_PAGE_COUNT 2U
 #define USER_PROCESS_MAX_PAGES 16U
 #define USER_PROCESS_DOMAIN_FIRST 3ULL
+#define USER_PROCESS_KERNEL_STACK_SIZE 16384U
 
 struct user_process_page {
     struct page_frame frame;
@@ -35,15 +39,19 @@ struct user_process_page {
 struct user_process_state {
     struct x86_address_space address_space;
     struct user_process_page pages[USER_PROCESS_MAX_PAGES];
+    uint8_t kernel_stack[USER_PROCESS_KERNEL_STACK_SIZE] __attribute__((aligned(16)));
     uint32_t page_count;
-    uint64_t next_domain_id;
+    uint64_t process_id;
     bool address_space_ready;
     bool poisoned;
+    bool in_use;
 };
 
-static struct user_process_state process_state = {
-    .next_domain_id = USER_PROCESS_DOMAIN_FIRST
-};
+static struct user_process_state process_states[KERNEL_PROCESS_MAX];
+static struct user_process_state *active_process_state;
+static uint64_t next_process_id = USER_PROCESS_DOMAIN_FIRST;
+
+#define process_state (*active_process_state)
 
 static uint16_t read_u16_le(const uint8_t *bytes) {
     return (uint16_t)bytes[0] | (uint16_t)((uint16_t)bytes[1] << 8);
@@ -287,27 +295,172 @@ static bool cleanup_process_pages(void) {
 bool x86_user_elf_run(const void *image, size_t image_size,
                       uint64_t *exit_status, bool *faulted) {
     uint64_t entry;
+    uint64_t process_id;
+    uint64_t parent_id;
     bool ran;
     bool cleanup_ok;
-    uint64_t process_domain;
+    bool recorded;
+    struct user_process_state *previous_state = active_process_state;
+    struct user_process_state *selected_state = 0;
 
     if (image == 0 || image_size == 0 || exit_status == 0 || faulted == 0
-        || process_state.poisoned || process_state.page_count != 0
-        || process_state.next_domain_id == UINT64_MAX
-        || !initialize_address_space()) {
+        || next_process_id == UINT64_MAX) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (!process_states[i].in_use && !process_states[i].poisoned) {
+            selected_state = &process_states[i];
+            break;
+        }
+    }
+    if (selected_state == 0) {
+        return false;
+    }
+    selected_state->in_use = true;
+    active_process_state = selected_state;
+    if (process_state.page_count != 0 || !initialize_address_space()) {
+        process_state.in_use = false;
+        active_process_state = previous_state;
         return false;
     }
 
     if (!parse_and_load_image(image, image_size, &entry)
         || !map_user_stack()) {
         (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
         return false;
     }
 
-    process_domain = process_state.next_domain_id++;
-    ran = x86_user_mode_run(&process_state.address_space, entry,
-                            USER_STACK_POINTER, process_domain,
-                            0, 0, 0, exit_status, faulted);
+    process_id = next_process_id++;
+    parent_id = kernel_domain_current_id();
+    process_state.process_id = process_id;
+    if (kernel_process_start(process_id, parent_id, x86_timer_ticks()) == 0) {
+        (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
+        return false;
+    }
+    uint64_t kernel_stack_top = (uint64_t)(uintptr_t)(
+        process_state.kernel_stack + sizeof(process_state.kernel_stack));
+    if (parent_id == 0
+        && !kernel_scheduler_start_root(
+            process_id, process_state.address_space.root_physical_address,
+            kernel_stack_top)) {
+        (void)kernel_process_finish(process_id, x86_timer_ticks(), 1, true);
+        (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
+        return false;
+    }
+    ran = x86_user_mode_run_with_kernel_stack(
+        &process_state.address_space, entry, USER_STACK_POINTER, process_id,
+        0, 0, 0, kernel_stack_top,
+        exit_status, faulted);
+    if (parent_id == 0) {
+        struct kernel_process_info process;
+        recorded = kernel_process_get(process_id, &process)
+            && (process.state == KERNEL_PROCESS_EXITED
+                || process.state == KERNEL_PROCESS_FAULTED);
+        if (recorded) {
+            *exit_status = process.exit_status;
+            *faulted = process.state == KERNEL_PROCESS_FAULTED;
+        }
+    } else {
+        if (!ran) {
+            *exit_status = UINT64_MAX;
+            *faulted = true;
+        }
+        recorded = kernel_process_finish(process_id, x86_timer_ticks(),
+                                         *exit_status, *faulted);
+    }
     cleanup_ok = cleanup_process_pages();
-    return ran && cleanup_ok;
+    process_state.in_use = false;
+    active_process_state = previous_state;
+    return ran && recorded && cleanup_ok;
+}
+
+static uint64_t *make_initial_context(struct user_process_state *state,
+                                     uint64_t entry,
+                                     uint64_t user_stack_pointer) {
+    uint64_t *context = (uint64_t *)(uintptr_t)(
+        state->kernel_stack + sizeof(state->kernel_stack) - 20U * 8U);
+    for (uint32_t i = 0; i < 20; i++) {
+        context[i] = 0;
+    }
+    context[15] = entry;
+    context[16] = 0x23;
+    context[17] = 0x202;
+    context[18] = user_stack_pointer;
+    context[19] = 0x1b;
+    return context;
+}
+
+bool x86_user_elf_spawn(const void *image, size_t image_size,
+                        uint64_t parent_id, uint64_t *process_id_out) {
+    uint64_t entry;
+    uint64_t process_id;
+    uint64_t kernel_stack_top;
+    struct user_process_state *previous_state = active_process_state;
+    struct user_process_state *selected_state = 0;
+
+    if (image == 0 || image_size == 0 || process_id_out == 0
+        || !kernel_scheduler_is_active() || next_process_id == UINT64_MAX) {
+        return false;
+    }
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (!process_states[i].in_use && !process_states[i].poisoned) {
+            selected_state = &process_states[i];
+            break;
+        }
+    }
+    if (selected_state == 0) {
+        return false;
+    }
+    selected_state->in_use = true;
+    active_process_state = selected_state;
+    if (process_state.page_count != 0 || !initialize_address_space()
+        || !parse_and_load_image(image, image_size, &entry)
+        || !map_user_stack()) {
+        (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
+        return false;
+    }
+
+    process_id = next_process_id++;
+    process_state.process_id = process_id;
+    kernel_stack_top = (uint64_t)(uintptr_t)(
+        process_state.kernel_stack + sizeof(process_state.kernel_stack));
+    if (kernel_process_start(process_id, parent_id, x86_timer_ticks()) == 0
+        || !kernel_process_set_runnable(process_id, false)
+        || !kernel_scheduler_add(
+            process_id, process_state.address_space.root_physical_address,
+            kernel_stack_top,
+            make_initial_context(&process_state, entry, USER_STACK_POINTER))) {
+        (void)kernel_process_finish(process_id, x86_timer_ticks(), 1, true);
+        (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
+        return false;
+    }
+    *process_id_out = process_id;
+    active_process_state = previous_state;
+    return true;
+}
+
+bool x86_user_elf_reap(uint64_t process_id) {
+    struct user_process_state *previous_state = active_process_state;
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (process_states[i].in_use
+            && process_states[i].process_id == process_id) {
+            active_process_state = &process_states[i];
+            bool cleanup_ok = cleanup_process_pages();
+            process_states[i].in_use = false;
+            active_process_state = previous_state;
+            return cleanup_ok;
+        }
+    }
+    return false;
 }

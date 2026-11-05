@@ -4,6 +4,7 @@
 #include "io.h"
 #include "serial.h"
 #include "timer.h"
+#include "process/scheduler.h"
 
 #define PIC_MASTER_COMMAND 0x20
 #define PIC_MASTER_DATA 0x21
@@ -158,10 +159,11 @@ bool x86_timer_uses_local_apic(void) {
     return local_apic_enabled;
 }
 
-void x86_timer_interrupt(void) {
+uint64_t *x86_timer_interrupt(uint64_t *context) {
     ticks++;
     if (local_apic_enabled) {
         local_apic[APIC_EOI / sizeof(uint32_t)] = 0;
     }
     x86_outb(PIC_MASTER_COMMAND, 0x20);
+    return kernel_scheduler_on_timer(context);
 }

@@ -21,6 +21,22 @@ HELLO_TEXT = (
     b"Welcome to Eloquence.\r\n"
     b"VirtIO block and FAT32 read-only access are online.\r\n"
 )
+CONTROL_SCRIPT = (
+    b"set RESULT=pass\n"
+    b"if $RESULT=pass\n"
+    b"echo conditional-pass\n"
+    b"else\n"
+    b"echo conditional-fail\n"
+    b"endif\n"
+    b"if $RESULT=fail\n"
+    b"echo wrong-branch\n"
+    b"else\n"
+    b"echo else-pass\n"
+    b"endif\n"
+    b"repeat 3\n"
+    b"echo loop-pass\n"
+    b"endrepeat\n"
+)
 
 
 def put_u16(buffer: bytearray, offset: int, value: int) -> None:
@@ -62,7 +78,10 @@ def put_u64(buffer: bytearray, offset: int, value: int) -> None:
 
 
 def make_hello_elf() -> bytes:
-    code = bytes.fromhex("48c7c00000000048c7c72a0000000f05")
+    code = bytes.fromhex(
+        "488d1d1f0000000fb63b85ff740cb8040000000f05"
+        "48ffc3ebedb800000000bf2a0000000f05"
+    ) + b"Eloquence is alive!\n\0"
     entry = 0x400000 + ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE
     header = struct.pack(
         "<16sHHIQQQIHHHHHH",
@@ -77,7 +96,25 @@ def make_hello_elf() -> bytes:
     return header + program_header + code
 
 
-def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, bytes, bytes, int]:
+def make_spin_elf() -> bytes:
+    code = bytes.fromhex("f390ebfc")
+    entry = 0x400000 + ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE
+    header = struct.pack(
+        "<16sHHIQQQIHHHHHH",
+        b"\x7fELF" + bytes((2, 1, 1, 0)) + bytes(8),
+        2, 62, 1, entry, ELF64_HEADER_SIZE, 0, 0, 64, 56, 1, 0, 0, 0,
+    )
+    program_header = struct.pack(
+        "<IIQQQQQQ",
+        1, 5, ELF64_HEADER_SIZE + ELF64_PROGRAM_HEADER_SIZE,
+        entry, 0, len(code), len(code), 16,
+    )
+    return header + program_header + code
+
+
+def make_fat32_volume(
+    total_sectors: int, volume_start: int, shell_size: int
+) -> tuple[bytes, bytes, bytes, int]:
     fat_sectors = math.ceil(
         (total_sectors - FAT_RESERVED_SECTORS + 2)
         / (SECTOR_SIZE // 4 + FAT_COUNT)
@@ -85,6 +122,9 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     cluster_count = total_sectors - FAT_RESERVED_SECTORS - FAT_COUNT * fat_sectors
     if cluster_count < 65525:
         raise ValueError("partition is too small for a FAT32 test volume")
+    shell_cluster_count = math.ceil(shell_size / SECTOR_SIZE)
+    if shell_cluster_count == 0 or shell_cluster_count + 5 >= cluster_count:
+        raise ValueError("invalid shell image size for FAT32 test volume")
 
     boot = bytearray(SECTOR_SIZE)
     boot[0:3] = b"\xeb\x58\x90"
@@ -117,8 +157,8 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     fs_info = bytearray(SECTOR_SIZE)
     put_u32(fs_info, 0, 0x41615252)
     put_u32(fs_info, 484, 0x61417272)
-    put_u32(fs_info, 488, cluster_count - 3)
-    put_u32(fs_info, 492, 4)
+    put_u32(fs_info, 488, cluster_count - 5 - shell_cluster_count)
+    put_u32(fs_info, 492, 7 + shell_cluster_count)
     put_u32(fs_info, 508, 0xAA550000)
 
     fat = bytearray(fat_sectors * SECTOR_SIZE)
@@ -127,21 +167,22 @@ def make_fat32_volume(total_sectors: int, volume_start: int) -> tuple[bytes, byt
     put_u32(fat, 8, 0x0FFFFFFF)
     put_u32(fat, 12, 0x0FFFFFFF)
     put_u32(fat, 16, 0x0FFFFFFF)
-
-    root = bytearray(SECTOR_SIZE)
-    root[:11] = b"HELLO   TXT"
-    root[11] = 0x20
-    put_u16(root, 20, 0)
-    put_u16(root, 26, 3)
-    put_u32(root, 28, len(HELLO_TEXT))
+    for index in range(shell_cluster_count):
+        cluster = 5 + index
+        next_cluster = cluster + 1 if index + 1 < shell_cluster_count else 0x0FFFFFFF
+        put_u32(fat, cluster * 4, next_cluster)
+    put_u32(fat, (5 + shell_cluster_count) * 4, 0x0FFFFFFF)
+    put_u32(fat, (6 + shell_cluster_count) * 4, 0x0FFFFFFF)
     return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT)
 
 
-def create_image(path: Path, size_mib: int, force: bool) -> None:
+def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> None:
     if size_mib < 64:
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; pass --force to replace it")
+    if not shell_elf:
+        raise ValueError("the shell ELF must not be empty")
 
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     backup_header_lba = total_sectors - 1
@@ -170,9 +211,12 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
         backup_entries_lba, disk_guid, entries_crc,
     )
     boot, fs_info, fat, contents_size = make_fat32_volume(
-        partition_sectors, PARTITION_START
+        partition_sectors, PARTITION_START, len(shell_elf)
     )
     hello_elf = make_hello_elf()
+    spin_elf = make_spin_elf()
+    spin_cluster = 5 + math.ceil(len(shell_elf) / SECTOR_SIZE)
+    script_cluster = spin_cluster + 1
 
     mode = "wb" if force else "xb"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -226,20 +270,44 @@ def create_image(path: Path, size_mib: int, force: bool) -> None:
         put_u16(root, 52, 0)
         put_u16(root, 58, 4)
         put_u32(root, 60, len(hello_elf))
+        root[64:75] = b"SHELL   ELF"
+        root[75] = 0x20
+        put_u16(root, 84, 0)
+        put_u16(root, 90, 5)
+        put_u32(root, 92, len(shell_elf))
+        root[96:107] = b"SPIN    ELF"
+        root[107] = 0x20
+        put_u16(root, 116, 0)
+        put_u16(root, 122, spin_cluster)
+        put_u32(root, 124, len(spin_elf))
+        root[128:139] = b"CONTROL TXT"
+        root[139] = 0x20
+        put_u16(root, 148, 0)
+        put_u16(root, 154, script_cluster)
+        put_u32(root, 156, len(CONTROL_SCRIPT))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
         image.seek((data_start + 2) * SECTOR_SIZE)
         image.write(hello_elf)
+        for index, offset in enumerate(range(0, len(shell_elf), SECTOR_SIZE)):
+            cluster = 5 + index
+            image.seek((data_start + cluster - 2) * SECTOR_SIZE)
+            image.write(shell_elf[offset : offset + SECTOR_SIZE])
+        image.seek((data_start + spin_cluster - 2) * SECTOR_SIZE)
+        image.write(spin_elf)
+        image.seek((data_start + script_cluster - 2) * SECTOR_SIZE)
+        image.write(CONTROL_SCRIPT)
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("image", type=Path)
     parser.add_argument("--size-mib", type=int, default=64)
+    parser.add_argument("--shell", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-    create_image(args.image, args.size_mib, args.force)
+    create_image(args.image, args.size_mib, args.force, args.shell.read_bytes())
     print(f"Created {args.image} ({args.size_mib} MiB, GPT + FAT32)")
 
 

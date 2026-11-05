@@ -18,10 +18,10 @@ x86_irq0_stub:
     pushq %r13
     pushq %r14
     pushq %r15
-    movq %rsp, %r12
+    movq %rsp, %rdi
     andq $-16, %rsp
     call x86_timer_interrupt
-    movq %r12, %rsp
+    movq %rax, %rsp
     popq %r15
     popq %r14
     popq %r13

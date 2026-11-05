@@ -8,12 +8,15 @@
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
+#include "domain/domain.h"
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
 #include "drivers/virtio/virtio_blk.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
+#include "process/process.h"
+#include "process/scheduler.h"
 #include "paging.h"
 #include "io.h"
 #include "serial.h"
@@ -21,9 +24,11 @@
 #include "storage/block_device.h"
 #include "storage/gpt.h"
 #include "storage/fat32.h"
+#include "storage/vfs.h"
 #include "user/mmio_demo.h"
 #include "user/elf_loader.h"
 #include "user_mode.h"
+#include "system_info.h"
 
 __attribute__((used, section(".limine_requests")))
 static volatile uint64_t limine_base_revision[] = LIMINE_BASE_REVISION(6);
@@ -54,8 +59,54 @@ struct limine_page_allocator_context {
 static struct limine_page_allocator_context page_allocator_context;
 static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
 static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
-static uint8_t fat32_file_buffer[4096];
+static uint8_t fat32_file_buffer[16384];
+static struct fat32_volume shell_root_volume;
+static struct vfs_entry shell_vfs_entries[VFS_MAX_DIRECTORY_ENTRIES];
+static uint8_t shell_write_buffer[FAT32_MAX_FILE_WRITE_BYTES];
+static char shell_write_name[FAT32_SHORT_NAME_LENGTH];
+static uint32_t shell_write_length;
+static bool shell_write_active;
+struct shell_process_directory {
+    uint64_t process_id;
+    uint32_t cluster;
+};
+static struct shell_process_directory shell_process_directories[
+    KERNEL_PROCESS_MAX];
 static uint64_t pci_functions_found;
+
+static uint32_t shell_current_directory(void) {
+    uint64_t process_id = kernel_domain_current_id();
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (shell_process_directories[i].process_id == process_id) {
+            return shell_process_directories[i].cluster;
+        }
+    }
+    return 0;
+}
+
+static bool shell_set_current_directory(uint32_t cluster) {
+    uint64_t process_id = kernel_domain_current_id();
+    uint32_t slot = KERNEL_PROCESS_MAX;
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (shell_process_directories[i].process_id == process_id) {
+            slot = i;
+            break;
+        }
+        if (shell_process_directories[i].process_id == 0
+            || !kernel_process_is_running(
+                shell_process_directories[i].process_id)) {
+            slot = i;
+        }
+    }
+    if (process_id == 0 || slot == KERNEL_PROCESS_MAX) {
+        return false;
+    }
+    shell_process_directories[slot] = (struct shell_process_directory){
+        .process_id = process_id,
+        .cluster = cluster
+    };
+    return true;
+}
 
 __attribute__((used, section(".limine_requests")))
 static volatile struct limine_paging_mode_request paging_mode_request = {
@@ -669,6 +720,483 @@ static void report_fat32_file(uint64_t device_index,
     }
 }
 
+static bool valid_short_name_character(char value) {
+    return (value >= 'A' && value <= 'Z')
+        || (value >= '0' && value <= '9')
+        || value == '_' || value == '-' || value == '$' || value == '~';
+}
+
+static bool decode_short_name(uint64_t packed_base, uint64_t packed_extension,
+                              char name[FAT32_SHORT_NAME_LENGTH]) {
+    size_t length = 0;
+    bool ended = false;
+
+    if (packed_base == 0 || (packed_extension >> 24) != 0) {
+        return false;
+    }
+    for (size_t i = 0; i < 8; i++) {
+        char value = (char)(packed_base >> (i * 8));
+        if (value == '\0') {
+            ended = true;
+            continue;
+        }
+        if (ended || !valid_short_name_character(value)) {
+            return false;
+        }
+        name[length++] = value;
+    }
+    if (length == 0) {
+        return false;
+    }
+    if (packed_extension != 0) {
+        name[length++] = '.';
+        ended = false;
+        for (size_t i = 0; i < 3; i++) {
+            char value = (char)(packed_extension >> (i * 8));
+            if (value == '\0') {
+                ended = true;
+                continue;
+            }
+            if (ended || !valid_short_name_character(value)) {
+                return false;
+            }
+            name[length++] = value;
+        }
+        if (name[length - 1] == '.') {
+            return false;
+        }
+    }
+    name[length] = '\0';
+    return true;
+}
+
+static bool fat32_vfs_list(void *context, uint32_t directory,
+                           struct vfs_entry *entries, uint32_t capacity,
+                           uint32_t *entry_count) {
+    struct fat32_volume *volume = context;
+    uint32_t count = 0;
+    uint32_t cluster = directory == 0 && volume != 0
+        ? volume->root_cluster : directory;
+    if (volume == 0 || entries == 0 || entry_count == 0
+        || capacity > FAT32_MAX_DIRECTORY_ENTRIES) {
+        return false;
+    }
+    enum fat32_result result = fat32_list_directory(
+        volume, cluster, fat32_entries, FAT32_MAX_DIRECTORY_ENTRIES, &count);
+    if (result != FAT32_OK || count > capacity) {
+        return false;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        struct vfs_entry *entry = &entries[i];
+        size_t character = 0;
+        while (fat32_entries[i].short_name[character] != '\0'
+               && character + 1 < sizeof(entry->name)) {
+            entry->name[character] = fat32_entries[i].short_name[character];
+            character++;
+        }
+        entry->name[character] = '\0';
+        entry->size = fat32_entries[i].size;
+        entry->directory = (fat32_entries[i].attributes & 0x10U) != 0;
+    }
+    *entry_count = count;
+    return true;
+}
+
+static bool fat32_vfs_read(void *context, uint32_t directory,
+                           const char *name, void *buffer,
+                           uint32_t capacity, uint32_t *bytes_read) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = directory == 0 && volume != 0
+        ? volume->root_cluster : directory;
+    return volume != 0 && fat32_read_directory_file(
+        volume, cluster, name, buffer, capacity, bytes_read) == FAT32_OK;
+}
+
+static bool fat32_vfs_create(void *context, uint32_t directory,
+                             const char *name) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = directory == 0 && volume != 0
+        ? volume->root_cluster : directory;
+    if (volume == 0 || cluster == 0) {
+        return false;
+    }
+    struct fat32_directory_entry entries[FAT32_MAX_DIRECTORY_ENTRIES];
+    uint32_t entry_count = 0;
+    if (fat32_list_directory(volume, cluster, entries,
+                             FAT32_MAX_DIRECTORY_ENTRIES,
+                             &entry_count) != FAT32_OK) {
+        return false;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (text_equals(entries[i].short_name, name)) {
+            return true;
+        }
+    }
+    return fat32_write_directory_file(volume, cluster, name, 0, 0)
+        == FAT32_OK;
+}
+
+static bool fat32_vfs_delete(void *context, uint32_t directory,
+                             const char *name) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = directory == 0 && volume != 0
+        ? volume->root_cluster : directory;
+    return volume != 0 && fat32_delete_directory_file(
+        volume, cluster, name) == FAT32_OK;
+}
+
+static bool fat32_vfs_write(void *context, uint32_t directory,
+                            const char *name,
+                            const void *buffer, uint32_t bytes) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = directory == 0 && volume != 0
+        ? volume->root_cluster : directory;
+    return volume != 0 && fat32_write_directory_file(
+        volume, cluster, name, buffer, bytes) == FAT32_OK;
+}
+
+static bool fat32_vfs_mkdir(void *context, uint32_t parent,
+                            const char *name) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = parent == 0 && volume != 0
+        ? volume->root_cluster : parent;
+    return volume != 0 && fat32_create_directory(
+        volume, cluster, name) == FAT32_OK;
+}
+
+static bool fat32_vfs_find_directory(void *context, uint32_t parent,
+                                     const char *name,
+                                     uint32_t *directory) {
+    struct fat32_volume *volume = context;
+    uint32_t cluster = parent == 0 && volume != 0
+        ? volume->root_cluster : parent;
+    return volume != 0 && fat32_find_directory(
+        volume, cluster, name, directory) == FAT32_OK;
+}
+
+static bool mount_shell_vfs(void) {
+    static const struct vfs_operations operations = {
+        .list_directory = fat32_vfs_list,
+        .read_file = fat32_vfs_read,
+        .create_file = fat32_vfs_create,
+        .delete_file = fat32_vfs_delete,
+        .write_file = fat32_vfs_write,
+        .create_directory = fat32_vfs_mkdir,
+        .find_directory = fat32_vfs_find_directory
+    };
+    struct gpt_partition partition;
+
+    if (vfs_root_mounted()) {
+        return true;
+    }
+    if (!find_gpt_partition(0, 1, &partition)
+        || fat32_mount(0, &partition, &shell_root_volume) != FAT32_OK) {
+        serial_write("Could not mount root filesystem.\n");
+        return false;
+    }
+    return vfs_mount_root(&operations, &shell_root_volume);
+}
+
+bool kernel_system_file_list(uint64_t device_index,
+                             uint64_t partition_number) {
+    uint32_t entry_count = 0;
+    if (device_index != 0 || partition_number != 1
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_list_root(shell_vfs_entries, VFS_MAX_DIRECTORY_ENTRIES,
+                       &entry_count)) {
+        serial_write("VFS root directory read failed.\n");
+        return true;
+    }
+    serial_write("Root directory (/):\n");
+    for (uint32_t i = 0; i < entry_count; i++) {
+        serial_write("  ");
+        serial_write(shell_vfs_entries[i].name);
+        if (shell_vfs_entries[i].directory) {
+            serial_write(" [directory]\n");
+        } else {
+            serial_write("  ");
+            serial_write_decimal(shell_vfs_entries[i].size);
+            serial_write(" bytes\n");
+        }
+    }
+    return true;
+}
+
+bool kernel_system_file_list_current(void) {
+    uint32_t entry_count = 0;
+    if (!mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_list_directory(shell_current_directory(), shell_vfs_entries,
+                            VFS_MAX_DIRECTORY_ENTRIES, &entry_count)) {
+        serial_write("VFS directory read failed.\n");
+        return true;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        serial_write("  ");
+        serial_write(shell_vfs_entries[i].name);
+        if (shell_vfs_entries[i].directory) {
+            serial_write(" [directory]\n");
+        } else {
+            serial_write("  ");
+            serial_write_decimal(shell_vfs_entries[i].size);
+            serial_write(" bytes\n");
+        }
+    }
+    return true;
+}
+
+bool kernel_system_file_cat(uint64_t packed_name,
+                            uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!decode_short_name(packed_name, packed_extension, name)) {
+        return false;
+    }
+    uint32_t bytes_read = 0;
+    if (!mount_shell_vfs()
+        || !vfs_read_file_in(shell_current_directory(), name,
+                             fat32_file_buffer,
+                             sizeof(fat32_file_buffer), &bytes_read)) {
+        serial_write("VFS file read failed or file not found.\n");
+        return true;
+    }
+    serial_write("Contents of ");
+    serial_write(name);
+    serial_write(":\n");
+    for (uint32_t i = 0; i < bytes_read; i++) {
+        char value = (char)fat32_file_buffer[i];
+        if (value == '\r') {
+            continue;
+        }
+        if (value == '\n') {
+            serial_write("\n");
+        } else if (value == '\t') {
+            serial_write("\t");
+        } else {
+            char text[2] = {value >= 32 && value <= 126 ? value : '?', '\0'};
+            serial_write(text);
+        }
+    }
+    if (bytes_read == 0 || fat32_file_buffer[bytes_read - 1] != '\n') {
+        serial_write("\n");
+    }
+    return true;
+}
+
+uint32_t kernel_system_file_read_chunk(uint64_t packed_name,
+                                      uint64_t packed_extension,
+                                      uint64_t offset, uint32_t *data) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t bytes_read = 0;
+    if (data == 0 || offset > sizeof(fat32_file_buffer)
+        || !decode_short_name(packed_name, packed_extension, name)) {
+        return ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (!mount_shell_vfs()
+        || !vfs_read_file_in(shell_current_directory(), name,
+                             fat32_file_buffer,
+                             sizeof(fat32_file_buffer), &bytes_read)) {
+        return ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (offset >= bytes_read) {
+        return ELOQUENCE_SYSCALL_RESULT_END_OF_FILE;
+    }
+    *data = 0;
+    uint32_t count = bytes_read - (uint32_t)offset;
+    if (count > 3) {
+        count = 3;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        *data |= (uint32_t)fat32_file_buffer[offset + i] << (i * 8);
+    }
+    *data |= count << 30;
+    return ELOQUENCE_SYSCALL_RESULT_OK;
+}
+
+bool kernel_system_file_stat(uint64_t packed_name,
+                             uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t entry_count = 0;
+
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_list_directory(shell_current_directory(), shell_vfs_entries,
+                            VFS_MAX_DIRECTORY_ENTRIES, &entry_count)) {
+        serial_write("VFS directory read failed.\n");
+        return true;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        if (text_equals(shell_vfs_entries[i].name, name)) {
+            serial_write("Name: ");
+            serial_write(name);
+            serial_write("\nType: ");
+            serial_write(shell_vfs_entries[i].directory
+                             ? "directory\n" : "file\n");
+            serial_write("Size: ");
+            serial_write_decimal(shell_vfs_entries[i].size);
+            serial_write(" bytes\n");
+            return true;
+        }
+    }
+    serial_write("File not found\n");
+    return true;
+}
+
+bool kernel_system_file_create(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_create_file_in(shell_current_directory(), name)) {
+        serial_write("Could not create file (read-only media or directory full).\n");
+        return false;
+    }
+    return true;
+}
+
+bool kernel_system_file_delete(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_delete_file_in(shell_current_directory(), name)) {
+        serial_write("Could not delete file (not found, read-only media, or I/O error).\n");
+        return false;
+    }
+    return true;
+}
+
+bool kernel_system_file_write_begin(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    if (shell_write_active || !decode_short_name(packed_name,
+                                                 packed_extension,
+                                                 shell_write_name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    shell_write_length = 0;
+    shell_write_active = true;
+    return true;
+}
+
+bool kernel_system_file_write_data(uint64_t packed_data, uint64_t bytes) {
+    if (!shell_write_active || bytes == 0 || bytes > sizeof(packed_data)
+        || bytes > sizeof(shell_write_buffer) - shell_write_length) {
+        return false;
+    }
+    for (uint64_t i = 0; i < bytes; i++) {
+        uint8_t value = (uint8_t)(packed_data >> (i * 8));
+        if (value != '\n' && value != '\r' && value != '\t'
+            && (value < 0x20 || value > 0x7e)) {
+            return false;
+        }
+    }
+    for (uint64_t i = 0; i < bytes; i++) {
+        shell_write_buffer[shell_write_length++] =
+            (uint8_t)(packed_data >> (i * 8));
+    }
+    return true;
+}
+
+bool kernel_system_file_write_commit(void) {
+    if (!shell_write_active) {
+        return false;
+    }
+    shell_write_active = false;
+    if (!vfs_write_file_in(shell_current_directory(), shell_write_name,
+                           shell_write_buffer, shell_write_length)) {
+        serial_write("File write failed (read-only media, size limit, or I/O error).\n");
+        return false;
+    }
+    return true;
+}
+
+void kernel_system_file_write_abort(void) {
+    shell_write_active = false;
+    shell_write_length = 0;
+}
+
+bool kernel_system_directory_create(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_create_directory_in(shell_current_directory(), name)) {
+        serial_write("Could not create directory (read-only media, name exists, or I/O error).\n");
+        return false;
+    }
+    return true;
+}
+
+bool kernel_system_directory_change(uint64_t packed_name,
+                                   uint64_t packed_extension) {
+    if (!mount_shell_vfs()) {
+        return false;
+    }
+    if (packed_name == ELOQUENCE_FS_CHDIR_ROOT && packed_extension == 0) {
+        return shell_set_current_directory(0);
+    }
+    uint32_t current = shell_current_directory();
+    uint32_t root = shell_root_volume.root_cluster;
+    if (packed_name == ELOQUENCE_FS_CHDIR_PARENT && packed_extension == 0) {
+        uint32_t parent = 0;
+        uint32_t cluster = current == 0 ? root : current;
+        if (fat32_parent_directory(&shell_root_volume, cluster, &parent)
+            != FAT32_OK) {
+            return false;
+        }
+        return shell_set_current_directory(parent == root ? 0 : parent);
+    }
+    char name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t directory = 0;
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !vfs_find_directory(current, name, &directory)) {
+        return false;
+    }
+    return shell_set_current_directory(directory == root ? 0 : directory);
+}
+
+bool kernel_system_process_list(void) {
+    struct kernel_process_info processes[KERNEL_PROCESS_MAX];
+    uint32_t count = kernel_process_snapshot(processes, KERNEL_PROCESS_MAX);
+
+    serial_write("PID  PPID  STATE     EXIT  RUNTIME-TICKS\n");
+    for (uint32_t i = 0; i < count; i++) {
+        const struct kernel_process_info *process = &processes[i];
+        uint64_t end = process->state == KERNEL_PROCESS_EXITED
+                || process->state == KERNEL_PROCESS_FAULTED
+            ? process->finished_at_tick : x86_timer_ticks();
+        serial_write_decimal(process->process_id);
+        serial_write("  ");
+        serial_write_decimal(process->parent_id);
+        serial_write("  ");
+        switch (process->state) {
+            case KERNEL_PROCESS_RUNNABLE: serial_write("runnable"); break;
+            case KERNEL_PROCESS_BLOCKED: serial_write("blocked"); break;
+            case KERNEL_PROCESS_RUNNING: serial_write("running"); break;
+            case KERNEL_PROCESS_EXITED: serial_write("exited"); break;
+            case KERNEL_PROCESS_FAULTED: serial_write("faulted"); break;
+            default: serial_write("unknown"); break;
+        }
+        serial_write("  ");
+        serial_write_decimal(process->exit_status);
+        serial_write("  ");
+        serial_write_decimal(end - process->started_at_tick);
+        serial_write("\n");
+    }
+    return true;
+}
+
 static void run_fat32_elf(uint64_t device_index,
                           uint64_t partition_number,
                           const char *short_name) {
@@ -694,6 +1222,60 @@ static void run_fat32_elf(uint64_t device_index,
     serial_write("Process exited with status ");
     serial_write_decimal(exit_status);
     serial_write(".\n");
+}
+
+bool kernel_system_process_exec(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char short_name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t image_size = 0;
+    uint64_t parent_id = kernel_domain_current_id();
+    uint64_t exit_status = 0;
+    bool faulted = false;
+
+    if (parent_id == KERNEL_DOMAIN_ID
+        || !kernel_process_is_running(parent_id)
+        || !decode_short_name(packed_name, packed_extension, short_name)
+        || !kernel_process_set_blocked(parent_id, true, x86_timer_ticks())) {
+        return false;
+    }
+
+    bool loaded = read_fat32_file(0, 1, short_name, &image_size);
+    bool ran = loaded && x86_user_elf_run(fat32_file_buffer, image_size,
+                                          &exit_status, &faulted);
+    (void)kernel_process_set_blocked(parent_id, false, x86_timer_ticks());
+    if (!ran) {
+        serial_write("exec: image could not be loaded or run\n");
+        return false;
+    }
+    if (faulted) {
+        serial_write("exec: child fault vector ");
+        serial_write_decimal(exit_status);
+        serial_write("\n");
+    } else {
+        serial_write("exec: child exited with status ");
+        serial_write_decimal(exit_status);
+        serial_write("\n");
+    }
+    return true;
+}
+
+uint64_t kernel_system_process_spawn(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    char short_name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t image_size = 0;
+    uint64_t process_id = 0;
+    uint64_t parent_id = kernel_domain_current_id();
+
+    if (parent_id == KERNEL_DOMAIN_ID
+        || !kernel_scheduler_is_active()
+        || !kernel_process_is_running(parent_id)
+        || !decode_short_name(packed_name, packed_extension, short_name)
+        || !read_fat32_file(0, 1, short_name, &image_size)
+        || !x86_user_elf_spawn(fat32_file_buffer, image_size, parent_id,
+                               &process_id)) {
+        return 0;
+    }
+    return process_id;
 }
 
 static bool parse_short_name(const char *text, char *name, size_t capacity) {
@@ -729,6 +1311,142 @@ static void report_system_info(void) {
     serial_write("\nBlock devices: ");
     serial_write_decimal(block_device_count());
     serial_write("\nInteractive monitor: polling COM1\n");
+}
+
+struct x86_cpuid_result {
+    uint32_t eax;
+    uint32_t ebx;
+    uint32_t ecx;
+    uint32_t edx;
+};
+
+static struct x86_cpuid_result x86_cpuid(uint32_t leaf, uint32_t subleaf) {
+    struct x86_cpuid_result result;
+    __asm__ volatile ("cpuid"
+                      : "=a"(result.eax), "=b"(result.ebx),
+                        "=c"(result.ecx), "=d"(result.edx)
+                      : "a"(leaf), "c"(subleaf));
+    return result;
+}
+
+static void report_cpu_info(void) {
+    struct x86_cpuid_result basic = x86_cpuid(0, 0);
+    struct x86_cpuid_result version = x86_cpuid(1, 0);
+    char vendor[13];
+    const uint32_t vendor_words[3] = {basic.ebx, basic.edx, basic.ecx};
+
+    for (uint32_t word = 0; word < 3; word++) {
+        for (uint32_t byte = 0; byte < 4; byte++) {
+            vendor[word * 4 + byte] =
+                (char)(vendor_words[word] >> (byte * 8));
+        }
+    }
+    vendor[12] = '\0';
+    uint32_t base_family = (version.eax >> 8) & 0xf;
+    uint32_t family = base_family;
+    uint32_t model = (version.eax >> 4) & 0xf;
+    uint32_t extended_family = (version.eax >> 20) & 0xff;
+    uint32_t extended_model = (version.eax >> 16) & 0xf;
+    if (family == 0xf) {
+        family += extended_family;
+    }
+    if (base_family == 6 || base_family == 0xf) {
+        model |= extended_model << 4;
+    }
+
+    serial_write("Architecture: x86_64\nVendor: ");
+    serial_write(vendor);
+    serial_write("\nFamily: ");
+    serial_write_decimal(family);
+    serial_write(" Model: ");
+    serial_write_decimal(model);
+    serial_write("\nFeatures:");
+    if ((version.edx & (1U << 25)) != 0) serial_write(" SSE");
+    if ((version.edx & (1U << 26)) != 0) serial_write(" SSE2");
+    if ((version.ecx & (1U << 25)) != 0) serial_write(" AES");
+    if ((version.ecx & (1U << 28)) != 0) serial_write(" AVX");
+    if ((version.ecx & (1U << 31)) != 0) serial_write(" hypervisor");
+    if (basic.eax >= 7) {
+        struct x86_cpuid_result structured = x86_cpuid(7, 0);
+        if ((structured.ebx & (1U << 5)) != 0) serial_write(" AVX2");
+    }
+    serial_write("\n");
+}
+
+bool kernel_system_report(uint64_t report) {
+    const struct limine_memmap_response *memory_map =
+        memory_map_request.response;
+
+    switch (report) {
+        case ELOQUENCE_SYSTEM_REPORT_SYSINFO:
+            report_system_info();
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_MEMINFO: {
+            uint64_t usable_bytes = 0;
+            if (memory_map == 0 || memory_map->entries == 0) {
+                serial_write("Memory map unavailable\n");
+                return true;
+            }
+            for (uint64_t i = 0; i < memory_map->entry_count; i++) {
+                const struct limine_memmap_entry *entry = memory_map->entries[i];
+                if (entry != 0 && entry->type == LIMINE_MEMMAP_USABLE
+                    && usable_bytes <= UINT64_MAX - entry->length) {
+                    usable_bytes += entry->length;
+                }
+            }
+            serial_write("Usable physical memory: ");
+            serial_write_decimal(usable_bytes / (1024 * 1024));
+            serial_write(" MiB (boot memory map; not free-page count)\n");
+            return true;
+        }
+        case ELOQUENCE_SYSTEM_REPORT_CPUINFO:
+            report_cpu_info();
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_DEVINFO:
+            serial_write("PCI functions: ");
+            serial_write_decimal(pci_functions_found);
+            serial_write("\nBlock devices: ");
+            serial_write_decimal(block_device_count());
+            serial_write("\n");
+            for (uint64_t i = 0; i < block_device_count(); i++) {
+                const struct block_device *device = block_device_get(i);
+                if (device != 0) {
+                    serial_write(device->name);
+                    serial_write(" model=");
+                    serial_write(device->model);
+                    serial_write(device->read_only ? " read-only\n" : " writable\n");
+                }
+            }
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_IRQINFO:
+            serial_write("Timer ticks: ");
+            serial_write_decimal(x86_timer_ticks());
+            serial_write(" (100 Hz)\nLocal APIC timer routing: ");
+            serial_write(x86_timer_uses_local_apic() ? "active\n" : "inactive\n");
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_BOOTINFO:
+            serial_write("Bootloader: ");
+            if (bootloader_request.response != 0
+                && bootloader_request.response->name != 0
+                && bootloader_request.response->version != 0) {
+                serial_write(bootloader_request.response->name);
+                serial_write(" ");
+                serial_write(bootloader_request.response->version);
+                serial_write("\n");
+            } else {
+                serial_write("unavailable\n");
+            }
+            serial_write("Physical memory map entries: ");
+            serial_write_decimal(memory_map != 0 ? memory_map->entry_count : 0);
+            serial_write("\n");
+            return true;
+        case ELOQUENCE_SYSTEM_REPORT_MMIO:
+            serial_write("MMIO access is capability-mediated from Ring 3.\n");
+            serial_write("Direct unprotected MMIO access is not available.\n");
+            return true;
+        default:
+            return false;
+    }
 }
 
 static void report_disk_list(void) {
@@ -955,5 +1673,9 @@ void kmain(void) {
     }
     serial_write("Boot information report complete.\n");
     __asm__ volatile ("sti" : : : "memory");
+    if (block_device_count() != 0) {
+        serial_write("Starting user shell from disk 0, GPT partition 1.\n");
+        run_fat32_elf(0, 1, "SHELL.ELF");
+    }
     serial_shell_run(handle_monitor_command, 0);
 }

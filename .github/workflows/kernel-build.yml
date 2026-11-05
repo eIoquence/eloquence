@@ -53,10 +53,23 @@ jobs:
       - name: Build ${{ matrix.architecture }}
         run: make ${{ matrix.target }}
 
+      - name: Build x86-64 user shell
+        if: matrix.architecture == 'x86_64'
+        run: make userland-elf
+
       - name: Upload build artifact
         uses: actions/upload-artifact@v7.0.2
         with:
           name: eloquence-${{ matrix.architecture }}
           path: ${{ matrix.artifact }}
+          if-no-files-found: error
+          retention-days: 14
+
+      - name: Upload user shell artifact
+        if: matrix.architecture == 'x86_64'
+        uses: actions/upload-artifact@v7.0.2
+        with:
+          name: eloquence-x86_64-userland
+          path: build/userland/shell.elf
           if-no-files-found: error
           retention-days: 14

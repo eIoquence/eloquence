@@ -6,7 +6,7 @@ TARGET_CC ?= clang
 TARGET_LD ?= ld.lld
 HOST_CC ?= cc
 QEMU ?= qemu-system-x86_64
-QEMU_DISK ?= build/eloquence-userland.raw
+QEMU_DISK ?= build/eloquence-shell.raw
 PYTHON ?= python3
 TARGET_ASFLAGS ?= --target=x86_64-unknown-none-elf -ffreestanding \
 	-fno-pic -fno-pie -m64 -mno-red-zone -mcmodel=kernel
@@ -58,6 +58,15 @@ MIPS32_CFLAGS ?= --target=mipsel-unknown-elf -std=gnu11 -O2 \
 	-fno-stack-protector -fno-pic -fno-pie -mno-abicalls \
 	-march=mips32r2 -mabi=32 -nostdinc \
 	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude -Ikernel
+USER_CFLAGS ?= --target=x86_64-unknown-none-elf -std=gnu11 -Os \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin \
+	-fno-stack-protector -fno-stack-check -fno-pic -fno-pie \
+	-fno-unwind-tables -fno-asynchronous-unwind-tables \
+	-ffunction-sections -fdata-sections -MMD -MP -m64 -march=x86-64 \
+	-mno-mmx -mno-sse -mno-red-zone -mcmodel=small -nostdinc \
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude
+USER_LDFLAGS ?= --build-id=none --gc-sections -z max-page-size=0x1000 \
+	-z noexecstack -m elf_x86_64 -T userland/user.ld
 
 KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/serial.o \
@@ -67,8 +76,10 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/exceptions.o build/arch/x86_64/exceptions_stubs.o \
 	build/arch/x86_64/timer.o build/arch/x86_64/timer_irq.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
+	build/process/process.o build/process/scheduler.o \
 	build/lib/memory.o build/memory/page_allocator.o \
 	build/storage/block_device.o build/storage/gpt.o build/storage/fat32.o \
+	build/storage/vfs.o \
 	build/monitor/serial_shell.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/drivers/virtio/virtio_blk.o \
@@ -83,8 +94,9 @@ MIPS32_OBJECTS := build/mips32/arch/mips32/irq.o
 -include $(AARCH64_OBJECTS:.o=.d)
 -include $(RISCV64_OBJECTS:.o=.d)
 -include $(MIPS32_OBJECTS:.o=.d)
+-include build/userland/shell.d
 
-.PHONY: all iso run qemu-disk x86_64-objects aarch64-objects aarch64-elf riscv64-objects \
+.PHONY: all iso run qemu-disk userland-elf x86_64-objects aarch64-objects aarch64-elf riscv64-objects \
 	riscv64-elf mips32-objects clean
 
 all: iso
@@ -163,6 +175,15 @@ build/mips32/%.o: kernel/%.c
 
 mips32-objects: $(MIPS32_OBJECTS)
 
+build/userland/shell.o: userland/shell.c include/eloquence/syscall_abi.h
+	mkdir -p $(@D)
+	$(TARGET_CC) $(USER_CFLAGS) -c $< -o $@
+
+build/userland/shell.elf: build/userland/shell.o userland/user.ld
+	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
+
+userland-elf: build/userland/shell.elf
+
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_LD) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)
 
@@ -181,10 +202,9 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-qemu-disk:
-	@if [ ! -f "$(QEMU_DISK)" ]; then \
-		$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)"; \
-	fi
+qemu-disk: build/userland/shell.elf
+	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
+		--shell build/userland/shell.elf --force
 
 run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \
