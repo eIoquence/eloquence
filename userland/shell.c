@@ -191,7 +191,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
-        "ps", "kill", "about", "exit"
+        "ps", "kill", "exec", "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -327,7 +327,7 @@ __attribute__((noreturn)) void _start(void) {
             }
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, kill PID, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, exec FILE.ELF, kill PID, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -398,6 +398,24 @@ __attribute__((noreturn)) void _start(void) {
                 if ((uint32_t)(result >> 32)
                     != ELOQUENCE_SYSCALL_RESULT_OK) {
                     write_string("kill: PID must be the current process\n");
+                }
+            }
+        } else if (command_is(line, "exec")) {
+            const char *filename = line + 4;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string("Usage: exec SHORTNAME.ELF\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_PROCESS_EXEC,
+                                               packed_base,
+                                               packed_extension, 0);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("exec: failed\n");
                 }
             }
         } else if (text_equals(line, "ls")) {

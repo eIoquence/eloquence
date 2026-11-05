@@ -28,6 +28,7 @@
 #define USER_STACK_PAGE_COUNT 2U
 #define USER_PROCESS_MAX_PAGES 16U
 #define USER_PROCESS_DOMAIN_FIRST 3ULL
+#define USER_PROCESS_KERNEL_STACK_SIZE 16384U
 
 struct user_process_page {
     struct page_frame frame;
@@ -37,15 +38,18 @@ struct user_process_page {
 struct user_process_state {
     struct x86_address_space address_space;
     struct user_process_page pages[USER_PROCESS_MAX_PAGES];
+    uint8_t kernel_stack[USER_PROCESS_KERNEL_STACK_SIZE] __attribute__((aligned(16)));
     uint32_t page_count;
-    uint64_t next_domain_id;
     bool address_space_ready;
     bool poisoned;
+    bool in_use;
 };
 
-static struct user_process_state process_state = {
-    .next_domain_id = USER_PROCESS_DOMAIN_FIRST
-};
+static struct user_process_state process_states[KERNEL_PROCESS_MAX];
+static struct user_process_state *active_process_state;
+static uint64_t next_process_id = USER_PROCESS_DOMAIN_FIRST;
+
+#define process_state (*active_process_state)
 
 static uint16_t read_u16_le(const uint8_t *bytes) {
     return (uint16_t)bytes[0] | (uint16_t)((uint16_t)bytes[1] << 8);
@@ -289,38 +293,66 @@ static bool cleanup_process_pages(void) {
 bool x86_user_elf_run(const void *image, size_t image_size,
                       uint64_t *exit_status, bool *faulted) {
     uint64_t entry;
+    uint64_t process_id;
+    uint64_t parent_id;
     bool ran;
     bool cleanup_ok;
     bool recorded;
-    uint64_t process_domain;
+    struct user_process_state *previous_state = active_process_state;
+    struct user_process_state *selected_state = 0;
 
     if (image == 0 || image_size == 0 || exit_status == 0 || faulted == 0
-        || process_state.poisoned || process_state.page_count != 0
-        || process_state.next_domain_id == UINT64_MAX
-        || !initialize_address_space()) {
+        || next_process_id == UINT64_MAX) {
+        return false;
+    }
+
+    for (uint32_t i = 0; i < KERNEL_PROCESS_MAX; i++) {
+        if (!process_states[i].in_use && !process_states[i].poisoned) {
+            selected_state = &process_states[i];
+            break;
+        }
+    }
+    if (selected_state == 0) {
+        return false;
+    }
+    selected_state->in_use = true;
+    active_process_state = selected_state;
+    if (process_state.page_count != 0 || !initialize_address_space()) {
+        process_state.in_use = false;
+        active_process_state = previous_state;
         return false;
     }
 
     if (!parse_and_load_image(image, image_size, &entry)
         || !map_user_stack()) {
         (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
         return false;
     }
 
-    process_domain = process_state.next_domain_id++;
-    if (kernel_process_start(process_domain, x86_timer_ticks()) == 0) {
+    process_id = next_process_id++;
+    parent_id = kernel_domain_current_id();
+    if (kernel_process_start(process_id, parent_id, x86_timer_ticks()) == 0) {
         (void)cleanup_process_pages();
+        process_state.in_use = false;
+        active_process_state = previous_state;
         return false;
     }
-    ran = x86_user_mode_run(&process_state.address_space, entry,
-                            USER_STACK_POINTER, process_domain,
-                            0, 0, 0, exit_status, faulted);
+    ran = x86_user_mode_run_with_kernel_stack(
+        &process_state.address_space, entry, USER_STACK_POINTER, process_id,
+        0, 0, 0,
+        (uint64_t)(uintptr_t)(process_state.kernel_stack
+                              + sizeof(process_state.kernel_stack)),
+        exit_status, faulted);
     if (!ran) {
         *exit_status = UINT64_MAX;
         *faulted = true;
     }
-    recorded = kernel_process_finish(process_domain, x86_timer_ticks(),
+    recorded = kernel_process_finish(process_id, x86_timer_ticks(),
                                      *exit_status, *faulted);
     cleanup_ok = cleanup_process_pages();
+    process_state.in_use = false;
+    active_process_state = previous_state;
     return ran && recorded && cleanup_ok;
 }

@@ -82,6 +82,10 @@ x86_user_enter_asm:
     pushq %r11
     pushq $0x23
     pushq %r9
+    cmpb $0, x86_user_entry_nested(%rip)
+    je 1f
+    swapgs
+1:
     iretq
 .size x86_user_enter_asm, .-x86_user_enter_asm
 

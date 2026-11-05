@@ -8,6 +8,7 @@
 #include "mmio.h"
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
+#include "domain/domain.h"
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
 #include "drivers/virtio/virtio_blk.h"
@@ -1027,14 +1028,18 @@ bool kernel_system_process_list(void) {
     struct kernel_process_info processes[KERNEL_PROCESS_MAX];
     uint32_t count = kernel_process_snapshot(processes, KERNEL_PROCESS_MAX);
 
-    serial_write("PID  STATE     EXIT  RUNTIME-TICKS\n");
+    serial_write("PID  PPID  STATE     EXIT  RUNTIME-TICKS\n");
     for (uint32_t i = 0; i < count; i++) {
         const struct kernel_process_info *process = &processes[i];
-        uint64_t end = process->state == KERNEL_PROCESS_RUNNING
-            ? x86_timer_ticks() : process->finished_at_tick;
+        uint64_t end = process->state == KERNEL_PROCESS_EXITED
+                || process->state == KERNEL_PROCESS_FAULTED
+            ? process->finished_at_tick : x86_timer_ticks();
         serial_write_decimal(process->process_id);
         serial_write("  ");
+        serial_write_decimal(process->parent_id);
+        serial_write("  ");
         switch (process->state) {
+            case KERNEL_PROCESS_BLOCKED: serial_write("blocked"); break;
             case KERNEL_PROCESS_RUNNING: serial_write("running"); break;
             case KERNEL_PROCESS_EXITED: serial_write("exited"); break;
             case KERNEL_PROCESS_FAULTED: serial_write("faulted"); break;
@@ -1074,6 +1079,41 @@ static void run_fat32_elf(uint64_t device_index,
     serial_write("Process exited with status ");
     serial_write_decimal(exit_status);
     serial_write(".\n");
+}
+
+bool kernel_system_process_exec(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char short_name[FAT32_SHORT_NAME_LENGTH];
+    uint32_t image_size = 0;
+    uint64_t parent_id = kernel_domain_current_id();
+    uint64_t exit_status = 0;
+    bool faulted = false;
+
+    if (parent_id == KERNEL_DOMAIN_ID
+        || !kernel_process_is_running(parent_id)
+        || !decode_short_name(packed_name, packed_extension, short_name)
+        || !kernel_process_set_blocked(parent_id, true, x86_timer_ticks())) {
+        return false;
+    }
+
+    bool loaded = read_fat32_file(0, 1, short_name, &image_size);
+    bool ran = loaded && x86_user_elf_run(fat32_file_buffer, image_size,
+                                          &exit_status, &faulted);
+    (void)kernel_process_set_blocked(parent_id, false, x86_timer_ticks());
+    if (!ran) {
+        serial_write("exec: image could not be loaded or run\n");
+        return false;
+    }
+    if (faulted) {
+        serial_write("exec: child fault vector ");
+        serial_write_decimal(exit_status);
+        serial_write("\n");
+    } else {
+        serial_write("exec: child exited with status ");
+        serial_write_decimal(exit_status);
+        serial_write("\n");
+    }
+    return true;
 }
 
 static bool parse_short_name(const char *text, char *name, size_t capacity) {

@@ -47,6 +47,7 @@ accepts a domain ID.
 | 18 | `FS_WRITE_ABORT` | None | `RAX[63:32]`: result code; discards pending write |
 | 19 | `PROCESS_LIST` | None | `RAX[63:32]`: result code; prints the bounded process history |
 | 20 | `PROCESS_KILL` | `RDI`: process ID | Terminates the caller with status 137 only when the ID is the caller's current process ID |
+| 21 | `PROCESS_EXEC` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads and runs a static ELF from the FAT32 root synchronously as a child |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -74,9 +75,12 @@ traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
 replaces it on commit.
 
 `PROCESS_LIST` reports up to 16 most recent process records, including PID,
-state, exit status, and runtime ticks. The kernel records one foreground user
-process at a time. `PROCESS_KILL` currently accepts only that running process;
-there is no concurrent process scheduling or cross-process termination yet.
+parent PID, state, exit status, and runtime ticks. `PROCESS_KILL` currently
+accepts only the running caller. `PROCESS_EXEC` blocks its caller until the
+child exits, then resumes it. Child execution uses a separate address space
+and kernel syscall stack, with nesting bounded to eight user contexts. This is
+synchronous parent/child execution, not concurrent process scheduling;
+cross-process termination and timer preemption remain unimplemented.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

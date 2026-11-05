@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "domain/domain.h"
+#include "process/process.h"
 #include "paging.h"
 #include "eloquence/syscall_abi.h"
 #include "user_mode.h"
@@ -64,14 +65,19 @@ static bool user_mode_initialized;
 static bool user_exit_occurred;
 static bool user_fault_occurred;
 static uint64_t user_exit_status;
+static uint32_t user_mode_depth;
+
+#define X86_USER_MODE_MAX_NESTING 8U
 
 uint64_t x86_user_kernel_cr3;
 uint64_t x86_user_return_stack;
+uint8_t x86_user_entry_nested;
 
 extern void x86_syscall_entry(void);
 extern void x86_user_enter_asm(uint64_t entry, uint64_t stack_pointer,
                                uint64_t argument0, uint64_t argument1,
                                uint64_t argument2, uint64_t user_rflags);
+extern uint64_t x86_user_return_stack;
 
 static uint64_t read_rflags(void) {
     uint64_t flags;
@@ -191,24 +197,60 @@ bool x86_user_mode_run(const struct x86_address_space *address_space,
                        uint64_t domain_id, uint64_t argument0,
                        uint64_t argument1, uint64_t argument2,
                        uint64_t *exit_status, bool *faulted) {
+    return x86_user_mode_run_with_kernel_stack(
+        address_space, entry, stack_pointer, domain_id, argument0, argument1,
+        argument2, (uint64_t)(uintptr_t)(syscall_stack + sizeof(syscall_stack)),
+        exit_status, faulted);
+}
+
+bool x86_user_mode_run_with_kernel_stack(
+    const struct x86_address_space *address_space, uint64_t entry,
+    uint64_t stack_pointer, uint64_t domain_id, uint64_t argument0,
+    uint64_t argument1, uint64_t argument2, uint64_t kernel_stack_top,
+    uint64_t *exit_status, bool *faulted) {
     struct x86_address_space kernel_space;
+    uint64_t previous_kernel_cr3;
+    uint64_t previous_return_stack;
+    uint64_t previous_kernel_stack;
+    uint64_t previous_user_stack;
+    uint64_t previous_domain;
+    uint64_t previous_exit_status;
+    uint8_t previous_entry_nested;
     uint64_t kernel_rflags;
     uint64_t user_rflags;
+    bool previous_exit_occurred;
+    bool previous_fault_occurred;
 
     if (!user_mode_initialized || address_space == 0
         || address_space->root_virtual_address == 0
         || domain_id == KERNEL_DOMAIN_ID || exit_status == 0 || faulted == 0
+        || (kernel_stack_top & 0xfU) != 0
+        || user_mode_depth >= X86_USER_MODE_MAX_NESTING
         || (entry >> 47) != 0 || (stack_pointer >> 47) != 0
         || !x86_address_space_current(&kernel_space)) {
         return false;
     }
 
     kernel_rflags = read_rflags();
+    previous_kernel_cr3 = x86_user_kernel_cr3;
+    previous_return_stack = x86_user_return_stack;
+    previous_kernel_stack = syscall_state.kernel_stack_pointer;
+    previous_user_stack = syscall_state.user_stack_pointer;
+    previous_domain = kernel_domain_current_id();
+    previous_exit_occurred = user_exit_occurred;
+    previous_fault_occurred = user_fault_occurred;
+    previous_exit_status = user_exit_status;
+    previous_entry_nested = x86_user_entry_nested;
+    user_mode_depth++;
+    x86_user_entry_nested = user_mode_depth > 1;
+
     user_rflags = X86_RFLAGS_FIXED;
-    if ((kernel_rflags & X86_RFLAGS_INTERRUPT) != 0) {
+    if ((kernel_rflags & X86_RFLAGS_INTERRUPT) != 0 || user_mode_depth > 1) {
         user_rflags |= X86_RFLAGS_INTERRUPT;
     }
 
+    syscall_state.kernel_stack_pointer = kernel_stack_top;
+    tss.rsp0 = kernel_stack_top;
     x86_user_kernel_cr3 = kernel_space.root_physical_address;
     user_exit_occurred = false;
     user_fault_occurred = false;
@@ -217,15 +259,33 @@ bool x86_user_mode_run(const struct x86_address_space *address_space,
     x86_address_space_activate(address_space);
     x86_user_enter_asm(entry, stack_pointer, argument0, argument1, argument2,
                        user_rflags);
-    kernel_domain_leave();
+    if (user_mode_depth > 1) {
+        __asm__ volatile ("swapgs" : : : "memory");
+    }
+    bool exited = user_exit_occurred;
+    uint64_t final_status = user_exit_status;
+    bool final_faulted = user_fault_occurred;
+
+    x86_address_space_activate(&kernel_space);
+    tss.rsp0 = previous_kernel_stack;
+    syscall_state.kernel_stack_pointer = previous_kernel_stack;
+    syscall_state.user_stack_pointer = previous_user_stack;
+    x86_user_kernel_cr3 = previous_kernel_cr3;
+    x86_user_return_stack = previous_return_stack;
+    x86_user_entry_nested = previous_entry_nested;
+    user_exit_occurred = previous_exit_occurred;
+    user_fault_occurred = previous_fault_occurred;
+    user_exit_status = previous_exit_status;
+    kernel_domain_enter(previous_domain);
+    user_mode_depth--;
     if ((kernel_rflags & X86_RFLAGS_INTERRUPT) != 0) {
         __asm__ volatile ("sti" : : : "memory");
     } else {
         __asm__ volatile ("cli" : : : "memory");
     }
-    *exit_status = user_exit_status;
-    *faulted = user_fault_occurred;
-    return user_exit_occurred;
+    *exit_status = final_status;
+    *faulted = final_faulted;
+    return exited;
 }
 
 void x86_user_mode_set_exit_status(uint64_t status) {

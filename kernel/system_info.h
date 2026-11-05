@@ -22,5 +22,7 @@ void kernel_system_file_write_abort(void);
 bool kernel_system_directory_create(uint64_t packed_name,
                                     uint64_t packed_extension);
 bool kernel_system_process_list(void);
+bool kernel_system_process_exec(uint64_t packed_name,
+                               uint64_t packed_extension);
 
 #endif

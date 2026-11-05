@@ -128,6 +128,12 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             x86_user_mode_set_exit_status(137);
             kernel_domain_leave();
             return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
+        case ELOQUENCE_SYSCALL_PROCESS_EXEC:
+            return pack_result(kernel_system_process_exec(frame->rdi,
+                                                           frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
         default:
             break;
     }
