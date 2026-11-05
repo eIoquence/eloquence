@@ -77,6 +77,42 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
+        case ELOQUENCE_SYSCALL_FS_TOUCH:
+            return pack_result(kernel_system_file_create(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_DELETE:
+            return pack_result(kernel_system_file_delete(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_WRITE_BEGIN:
+            return pack_result(kernel_system_file_write_begin(frame->rdi,
+                                                               frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_WRITE_DATA:
+            return pack_result(kernel_system_file_write_data(frame->rdi,
+                                                              frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_WRITE_COMMIT:
+            return pack_result(kernel_system_file_write_commit()
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_MKDIR:
+            return pack_result(kernel_system_directory_create(frame->rdi,
+                                                               frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_FS_WRITE_ABORT:
+            kernel_system_file_write_abort();
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         default:
             break;
     }

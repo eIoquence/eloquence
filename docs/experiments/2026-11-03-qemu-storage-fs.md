@@ -38,6 +38,7 @@ compiled `SHELL.ELF` user program. It does not replace an existing image.
 
 This confirms one QEMU TCG configuration, not physical hardware. VirtIO uses
 legacy PCI I/O and polling, with no IOMMU setup or device IRQ handling. FAT32
-access is read-only, limited to the root directory and short 8.3 names; `fs cat`
-reads at most 4 KiB. The block interface has write and flush callbacks, but the
-monitor and filesystem do not issue writes.
+access is limited to the root directory and short 8.3 names; reads are bounded
+and writes are capped at 16 KiB. Mutations use write and flush callbacks but
+are not journaled, so interruption during metadata updates can leave the volume
+inconsistent. Subdirectory traversal is not implemented.

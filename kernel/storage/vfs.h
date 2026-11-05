@@ -18,6 +18,11 @@ struct vfs_operations {
                       uint32_t capacity, uint32_t *entry_count);
     bool (*read_root_file)(void *context, const char *name, void *buffer,
                            uint32_t capacity, uint32_t *bytes_read);
+    bool (*create_root_file)(void *context, const char *name);
+    bool (*delete_root_file)(void *context, const char *name);
+    bool (*write_root_file)(void *context, const char *name,
+                            const void *buffer, uint32_t bytes);
+    bool (*create_root_directory)(void *context, const char *name);
 };
 
 bool vfs_mount_root(const struct vfs_operations *operations, void *context);
@@ -26,5 +31,9 @@ bool vfs_list_root(struct vfs_entry *entries, uint32_t capacity,
                    uint32_t *entry_count);
 bool vfs_read_file(const char *path, void *buffer, uint32_t capacity,
                    uint32_t *bytes_read);
+bool vfs_create_file(const char *path);
+bool vfs_delete_file(const char *path);
+bool vfs_write_file(const char *path, const void *buffer, uint32_t bytes);
+bool vfs_create_directory(const char *path);
 
 #endif

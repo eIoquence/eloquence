@@ -53,7 +53,10 @@ both behaviors were exercised in QEMU. `ls`, `cat HELLO.TXT`, and `pwd` also
 worked through kernel-mediated, read-only FAT32 access. `cat` accepts bounded
 8.3 names, and `stat` reports root entry type and size. These operations now
 pass through a single-root VFS adapter backed by FAT32. `pwd` works at `/`;
-`cd` only confirms the root because there are no subdirectories in the shell
-interface yet. Multiple mounts and write support are absent.
+`cd` only confirms the root because subdirectory path traversal is not yet
+implemented. The shell also supports `touch FILE`, `rm FILE`, `mkdir DIR`, and
+`echo TEXT > FILE` through scalar filesystem syscalls. These mutate only the
+root directory, accept short 8.3 names, and cap writes at 16 KiB. FAT32 writes
+are not journaled; multiple mounts remain absent.
 `cpuinfo` reports the CPUID vendor, family, model, and selected feature bits;
 QEMU returned those fields successfully.

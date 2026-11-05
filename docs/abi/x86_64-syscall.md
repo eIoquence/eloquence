@@ -38,6 +38,13 @@ accepts a domain ID.
 | 9 | `FS_LIST` | `RDI`: block device index, `RSI`: GPT partition number | `RAX[63:32]`: result code; prints the FAT32 root directory |
 | 10 | `FS_CAT` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | `RAX[63:32]`: result code; prints a FAT32 root file |
 | 11 | `FS_STAT` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | `RAX[63:32]`: result code; prints root-file metadata |
+| 12 | `FS_TOUCH` | `RDI`: packed 8.3 name | `RAX[63:32]`: result code; creates an empty root file if absent |
+| 13 | `FS_DELETE` | `RDI`: packed 8.3 name | `RAX[63:32]`: result code; removes a root file |
+| 14 | `FS_WRITE_BEGIN` | `RDI`: packed 8.3 name | `RAX[63:32]`: result code; starts a bounded buffered replacement |
+| 15 | `FS_WRITE_DATA` | `RDI`: up to 8 ASCII bytes packed little-endian; `RSI`: byte count | `RAX[63:32]`: result code; appends to pending write |
+| 16 | `FS_WRITE_COMMIT` | None | `RAX[63:32]`: result code; commits pending write |
+| 17 | `FS_MKDIR` | `RDI`: packed 8.3 name | `RAX[63:32]`: result code; creates a root directory |
+| 18 | `FS_WRITE_ABORT` | None | `RAX[63:32]`: result code; discards pending write |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -55,9 +62,14 @@ and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
 kernel-owned snapshots; it never accepts user pointers. The report interface
 is experimental and currently covers system, usable-memory, CPUID vendor and
 family/model/features, device, timer/IRQ, and bootloader summaries.
-`FS_LIST`, `FS_CAT`, and `FS_STAT` are read-only and currently expose only the
-FAT32 root. `FS_CAT` and `FS_STAT` accept validated ASCII 8.3 names and target
-device 0, partition 1.
+Filesystem calls target device 0, partition 1 and currently expose only the
+FAT32 root. Names are validated ASCII 8.3 names. Writes are limited to 16 KiB
+and staged by scalar calls; the kernel does not accept user pointers. The block
+device must support write and flush. FAT32 metadata updates are not journaled,
+so power loss during a mutation can leave the volume inconsistent. Directory
+creation and file operations are root-only; the shell has no subdirectory path
+traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
+replaces it on commit.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

@@ -2,11 +2,13 @@
 #define ELOQUENCE_STORAGE_FAT32_H
 
 #include <stdint.h>
+#include <stdbool.h>
 
 #include "gpt.h"
 
 #define FAT32_MAX_DIRECTORY_ENTRIES 128U
 #define FAT32_SHORT_NAME_LENGTH 13U
+#define FAT32_MAX_FILE_WRITE_BYTES 16384U
 
 struct fat32_volume {
     uint64_t device_index;
@@ -16,6 +18,9 @@ struct fat32_volume {
     uint32_t sector_size;
     uint32_t sectors_per_cluster;
     uint32_t fat_sector_count;
+    uint32_t fat_count;
+    uint32_t active_fat_index;
+    bool fat_mirroring;
     uint32_t cluster_count;
     uint32_t root_cluster;
 };
@@ -46,5 +51,14 @@ enum fat32_result fat32_list_root(
 enum fat32_result fat32_read_root_file(
     const struct fat32_volume *volume, const char *short_name,
     void *buffer, uint32_t capacity, uint32_t *bytes_read);
+enum fat32_result fat32_create_root_file(
+    const struct fat32_volume *volume, const char *short_name);
+enum fat32_result fat32_delete_root_file(
+    const struct fat32_volume *volume, const char *short_name);
+enum fat32_result fat32_write_root_file(
+    const struct fat32_volume *volume, const char *short_name,
+    const void *buffer, uint32_t bytes);
+enum fat32_result fat32_create_root_directory(
+    const struct fat32_volume *volume, const char *short_name);
 
 #endif

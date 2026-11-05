@@ -54,6 +54,8 @@ static void system_report(uint64_t report) {
     (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_REPORT, report, 0, 0);
 }
 
+static size_t text_length(const char *text);
+
 static bool pack_filename(const char *text, uint64_t *base,
                           uint64_t *extension) {
     size_t base_length = 0;
@@ -104,6 +106,47 @@ static bool pack_filename(const char *text, uint64_t *base,
     return true;
 }
 
+static bool write_text_file(const char *filename, const char *text) {
+    uint64_t packed_base;
+    uint64_t packed_extension;
+    if (!pack_filename(filename, &packed_base, &packed_extension)) {
+        write_string("Usage: echo TEXT > SHORTNAME.EXT\n");
+        return false;
+    }
+    uint64_t result = user_syscall(ELOQUENCE_SYSCALL_FS_WRITE_BEGIN,
+                                   packed_base, packed_extension, 0);
+    if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+        write_string("Could not begin file write.\n");
+        return false;
+    }
+
+    size_t length = text_length(text);
+    for (size_t offset = 0; offset < length; offset += 8) {
+        uint64_t packed = 0;
+        uint64_t count = length - offset < 8 ? length - offset : 8;
+        for (uint64_t i = 0; i < count; i++) {
+            packed |= (uint64_t)(uint8_t)text[offset + i] << (i * 8);
+        }
+        result = user_syscall(ELOQUENCE_SYSCALL_FS_WRITE_DATA,
+                              packed, count, 0);
+        if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+            write_string("File write buffer rejected data.\n");
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_WRITE_ABORT, 0, 0, 0);
+            return false;
+        }
+    }
+    (void)user_syscall(ELOQUENCE_SYSCALL_FS_WRITE_DATA, '\n', 1, 0);
+    result = user_syscall(ELOQUENCE_SYSCALL_FS_WRITE_COMMIT, 0, 0, 0);
+    if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+        write_string("Could not save file.\n");
+        return false;
+    }
+    write_string("Wrote ");
+    write_string(filename);
+    write_char('\n');
+    return true;
+}
+
 static bool command_is(const char *line, const char *name) {
     while (*name != '\0' && *line == *name) {
         line++;
@@ -147,7 +190,8 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
     static const char *const commands[] = {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
-        "bootinfo", "ls", "cat", "stat", "pwd", "cd", "about", "exit"
+        "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
+        "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -267,13 +311,34 @@ __attribute__((noreturn)) void _start(void) {
             }
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, pwd, cd /, about, exit\n");
+            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, about, exit\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
-            const char *text = line + 4;
+            char *text = line + 4;
             while (*text == ' ' || *text == '\t') {
                 text++;
+            }
+            char *redirect = text;
+            while (*redirect != '\0' && *redirect != '>') {
+                redirect++;
+            }
+            if (*redirect == '>') {
+                char *filename = redirect + 1;
+                while (redirect > text
+                       && (redirect[-1] == ' ' || redirect[-1] == '\t')) {
+                    redirect--;
+                }
+                *redirect = '\0';
+                while (*filename == ' ' || *filename == '\t') {
+                    filename++;
+                }
+                char *end = filename + text_length(filename);
+                while (end > filename && (end[-1] == ' ' || end[-1] == '\t')) {
+                    *--end = '\0';
+                }
+                (void)write_text_file(filename, text);
+                continue;
             }
             write_string(text);
             write_char('\n');
@@ -335,10 +400,37 @@ __attribute__((noreturn)) void _start(void) {
                 (void)user_syscall(ELOQUENCE_SYSCALL_FS_STAT, packed_base,
                                    packed_extension, 0);
             }
-        } else if (command_is(line, "mkdir") || command_is(line, "touch")
-                   || command_is(line, "rm") || command_is(line, "cp")
-                   || command_is(line, "mv")) {
-            write_string("FAT32 is mounted read-only.\n");
+        } else if (command_is(line, "touch") || command_is(line, "rm")) {
+            bool remove_file = line[0] == 'r';
+            const char *filename = line + (remove_file ? 2 : 5);
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string(remove_file ? "Usage: rm SHORTNAME.EXT\n"
+                                         : "Usage: touch SHORTNAME.EXT\n");
+            } else {
+                (void)user_syscall(remove_file ? ELOQUENCE_SYSCALL_FS_DELETE
+                                               : ELOQUENCE_SYSCALL_FS_TOUCH,
+                                   packed_base, packed_extension, 0);
+            }
+        } else if (command_is(line, "mkdir")) {
+            const char *dirname = line + 5;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*dirname == ' ' || *dirname == '\t') {
+                dirname++;
+            }
+            if (!pack_filename(dirname, &packed_base, &packed_extension)) {
+                write_string("Usage: mkdir SHORTNAME\n");
+            } else {
+                (void)user_syscall(ELOQUENCE_SYSCALL_FS_MKDIR, packed_base,
+                                   packed_extension, 0);
+            }
+        } else if (command_is(line, "cp") || command_is(line, "mv")) {
+            write_string("Command is not implemented yet.\n");
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {

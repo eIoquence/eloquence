@@ -59,6 +59,10 @@ static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
 static uint8_t fat32_file_buffer[16384];
 static struct fat32_volume shell_root_volume;
 static struct vfs_entry shell_vfs_entries[VFS_MAX_DIRECTORY_ENTRIES];
+static uint8_t shell_write_buffer[FAT32_MAX_FILE_WRITE_BYTES];
+static char shell_write_name[FAT32_SHORT_NAME_LENGTH];
+static uint32_t shell_write_length;
+static bool shell_write_active;
 static uint64_t pci_functions_found;
 
 __attribute__((used, section(".limine_requests")))
@@ -760,10 +764,39 @@ static bool fat32_vfs_read(void *context, const char *name, void *buffer,
                == FAT32_OK;
 }
 
+static bool fat32_vfs_create(void *context, const char *name) {
+    struct fat32_volume *volume = context;
+    return volume != 0
+        && fat32_create_root_file(volume, name) == FAT32_OK;
+}
+
+static bool fat32_vfs_delete(void *context, const char *name) {
+    struct fat32_volume *volume = context;
+    return volume != 0
+        && fat32_delete_root_file(volume, name) == FAT32_OK;
+}
+
+static bool fat32_vfs_write(void *context, const char *name,
+                            const void *buffer, uint32_t bytes) {
+    struct fat32_volume *volume = context;
+    return volume != 0
+        && fat32_write_root_file(volume, name, buffer, bytes) == FAT32_OK;
+}
+
+static bool fat32_vfs_mkdir(void *context, const char *name) {
+    struct fat32_volume *volume = context;
+    return volume != 0
+        && fat32_create_root_directory(volume, name) == FAT32_OK;
+}
+
 static bool mount_shell_vfs(void) {
     static const struct vfs_operations operations = {
         .list_root = fat32_vfs_list,
-        .read_root_file = fat32_vfs_read
+        .read_root_file = fat32_vfs_read,
+        .create_root_file = fat32_vfs_create,
+        .delete_root_file = fat32_vfs_delete,
+        .write_root_file = fat32_vfs_write,
+        .create_root_directory = fat32_vfs_mkdir
     };
     struct gpt_partition partition;
 
@@ -876,6 +909,116 @@ bool kernel_system_file_stat(uint64_t packed_name,
         }
     }
     serial_write("File not found\n");
+    return true;
+}
+
+static bool make_vfs_path(const char *name, char path[VFS_NAME_CAPACITY + 1]) {
+    size_t length = 0;
+    path[length++] = '/';
+    while (name[length - 1] != '\0' && length < VFS_NAME_CAPACITY) {
+        path[length] = name[length - 1];
+        length++;
+    }
+    if (name[length - 1] != '\0') {
+        return false;
+    }
+    path[length] = '\0';
+    return true;
+}
+
+bool kernel_system_file_create(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    char path[VFS_NAME_CAPACITY + 1];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !make_vfs_path(name, path) || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_create_file(path)) {
+        serial_write("Could not create file (read-only media or directory full).\n");
+        return false;
+    }
+    return true;
+}
+
+bool kernel_system_file_delete(uint64_t packed_name,
+                               uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    char path[VFS_NAME_CAPACITY + 1];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !make_vfs_path(name, path) || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_delete_file(path)) {
+        serial_write("Could not delete file (not found, read-only media, or I/O error).\n");
+        return false;
+    }
+    return true;
+}
+
+bool kernel_system_file_write_begin(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    if (shell_write_active || !decode_short_name(packed_name,
+                                                 packed_extension,
+                                                 shell_write_name)
+        || !mount_shell_vfs()) {
+        return false;
+    }
+    shell_write_length = 0;
+    shell_write_active = true;
+    return true;
+}
+
+bool kernel_system_file_write_data(uint64_t packed_data, uint64_t bytes) {
+    if (!shell_write_active || bytes == 0 || bytes > sizeof(packed_data)
+        || bytes > sizeof(shell_write_buffer) - shell_write_length) {
+        return false;
+    }
+    for (uint64_t i = 0; i < bytes; i++) {
+        uint8_t value = (uint8_t)(packed_data >> (i * 8));
+        if (value != '\n' && value != '\r' && value != '\t'
+            && (value < 0x20 || value > 0x7e)) {
+            return false;
+        }
+    }
+    for (uint64_t i = 0; i < bytes; i++) {
+        shell_write_buffer[shell_write_length++] =
+            (uint8_t)(packed_data >> (i * 8));
+    }
+    return true;
+}
+
+bool kernel_system_file_write_commit(void) {
+    char path[VFS_NAME_CAPACITY + 1];
+    if (!shell_write_active) {
+        return false;
+    }
+    shell_write_active = false;
+    if (!make_vfs_path(shell_write_name, path)
+        || !vfs_write_file(path, shell_write_buffer, shell_write_length)) {
+        serial_write("File write failed (read-only media, size limit, or I/O error).\n");
+        return false;
+    }
+    return true;
+}
+
+void kernel_system_file_write_abort(void) {
+    shell_write_active = false;
+    shell_write_length = 0;
+}
+
+bool kernel_system_directory_create(uint64_t packed_name,
+                                    uint64_t packed_extension) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    char path[VFS_NAME_CAPACITY + 1];
+    if (!decode_short_name(packed_name, packed_extension, name)
+        || !make_vfs_path(name, path) || !mount_shell_vfs()) {
+        return false;
+    }
+    if (!vfs_create_directory(path)) {
+        serial_write("Could not create directory (read-only media, name exists, or I/O error).\n");
+        return false;
+    }
     return true;
 }
 
