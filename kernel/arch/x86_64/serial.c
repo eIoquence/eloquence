@@ -33,7 +33,7 @@ void serial_write(const char *text) {
 }
 
 bool serial_write_user_char(uint64_t value) {
-    if (value > 0x7f || (value < 0x20 && value != '\n'
+    if (value > 0x7f || (value < 0x20 && value != '\b' && value != '\n'
                          && value != '\r' && value != '\t')) {
         return false;
     }

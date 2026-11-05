@@ -30,9 +30,9 @@ from disk 0, GPT partition 1 after boot-time hardware discovery.
 ## Limits
 
 The user shell is a foreground process with no scheduler or child-process
-launch. It implements `help`, `about`, `echo TEXT`, and `exit`; line editing,
-buffered I/O, and a stable syscall ABI are absent. If no block device or
-`SHELL.ELF` is available, the kernel falls back to its diagnostic monitor.
-Serial input uses a non-blocking syscall and user-mode polling with `pause`.
-FAT32 remains read-only, and this run used QEMU TCG rather than physical
-hardware.
+launch. It implements `help`, `about`, `echo TEXT`, and `exit`, with Backspace
+and Ctrl-U line editing. Buffered I/O and a stable syscall ABI are absent. If
+no block device or `SHELL.ELF` is available, the kernel falls back to its
+diagnostic monitor. Serial input uses a non-blocking syscall and user-mode
+polling with `pause`. FAT32 remains read-only, and this run used QEMU TCG rather
+than physical hardware.

@@ -29,6 +29,12 @@ static void write_string(const char *text) {
     }
 }
 
+static void erase_character(void) {
+    write_char('\b');
+    write_char(' ');
+    write_char('\b');
+}
+
 static bool text_equals(const char *left, const char *right) {
     while (*left != '\0' && *left == *right) {
         left++;
@@ -74,6 +80,20 @@ static void read_line(char *line, size_t capacity) {
             line[length] = '\0';
             write_char('\n');
             return;
+        }
+        if (value == '\b' || (uint8_t)value == 0x7f) {
+            if (length != 0) {
+                line[--length] = '\0';
+                erase_character();
+            }
+            continue;
+        }
+        if ((uint8_t)value == 0x15) {
+            while (length != 0) {
+                line[--length] = '\0';
+                erase_character();
+            }
+            continue;
         }
         if (value < 0x20 || value > 0x7e || length + 1 >= capacity) {
             continue;
