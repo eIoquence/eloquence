@@ -6,6 +6,7 @@
 
 #define SHELL_LINE_CAPACITY 80U
 #define SHELL_PIPELINE_CAPACITY 256U
+#define SHELL_SCRIPT_CAPACITY 2048U
 #define TIMER_FREQUENCY_HZ 100U
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
 
@@ -192,7 +193,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
-        "ps", "kill", "exec", "spawn", "about", "exit"
+        "ps", "kill", "exec", "spawn", "script", "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -370,6 +371,100 @@ static bool run_pipeline(char *line) {
     return true;
 }
 
+static void run_script_line(char *line) {
+    char *command = skip_spaces(line);
+    if (*command == '\0' || *command == '#') {
+        return;
+    }
+    for (char *cursor = command; *cursor != '\0'; cursor++) {
+        if (*cursor == '|') {
+            (void)run_pipeline(command);
+            return;
+        }
+    }
+    if (command_is(command, "echo")) {
+        write_string(skip_spaces(command + 4));
+        write_char('\n');
+    } else if (text_equals(command, "uname")) {
+        write_string("Eloquence x86_64\n");
+    } else if (text_equals(command, "version")) {
+        write_string(SHELL_VERSION "\n");
+    } else if (text_equals(command, "sysinfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_SYSINFO);
+    } else if (text_equals(command, "meminfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_MEMINFO);
+    } else if (text_equals(command, "cpuinfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_CPUINFO);
+    } else if (text_equals(command, "devinfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_DEVINFO);
+    } else if (text_equals(command, "irqinfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
+    } else if (text_equals(command, "bootinfo")) {
+        system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+    } else {
+        write_string("script: unsupported command: ");
+        write_string(command);
+        write_char('\n');
+    }
+}
+
+static void run_script(const char *filename) {
+    uint64_t packed_base;
+    uint64_t packed_extension;
+    char contents[SHELL_SCRIPT_CAPACITY];
+    size_t length = 0;
+    uint64_t offset = 0;
+    if (!pack_filename(filename, &packed_base, &packed_extension)) {
+        write_string("Usage: script SHORTNAME.TXT\n");
+        return;
+    }
+    for (;;) {
+        uint64_t result = user_syscall(ELOQUENCE_SYSCALL_FS_READ_CHUNK,
+                                       packed_base, packed_extension, offset);
+        uint32_t status = (uint32_t)(result >> 32);
+        if (status == ELOQUENCE_SYSCALL_RESULT_END_OF_FILE) {
+            break;
+        }
+        uint32_t data = (uint32_t)result;
+        uint32_t count = data >> 30;
+        if (status != ELOQUENCE_SYSCALL_RESULT_OK || count == 0
+            || length + count > sizeof(contents)) {
+            write_string("script: read failed or script exceeds 2 KiB\n");
+            return;
+        }
+        for (size_t i = 0; i < count; i++) {
+            char value = (char)(data >> (i * 8));
+            if (value == '\0') {
+                write_string("script: NUL bytes are not valid text\n");
+                return;
+            }
+            contents[length++] = value;
+        }
+        offset += count;
+    }
+    size_t line_start = 0;
+    for (size_t i = 0; i <= length; i++) {
+        if (i == length || contents[i] == '\n' || contents[i] == '\r') {
+            char line[SHELL_LINE_CAPACITY];
+            size_t line_length = i - line_start;
+            if (line_length >= sizeof(line)) {
+                write_string("script: command exceeds shell line limit\n");
+            } else {
+                for (size_t j = 0; j < line_length; j++) {
+                    line[j] = contents[line_start + j];
+                }
+                line[line_length] = '\0';
+                run_script_line(line);
+            }
+            if (i < length && contents[i] == '\r' && i + 1 < length
+                && contents[i + 1] == '\n') {
+                i++;
+            }
+            line_start = i + 1;
+        }
+    }
+}
+
 static bool parse_process_id(const char *text, uint64_t *process_id) {
     uint64_t value = 0;
     if (*text == '\0' || process_id == 0) {
@@ -484,7 +579,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, exec, spawn, kill, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -527,6 +622,8 @@ __attribute__((noreturn)) void _start(void) {
             write_string(" ticks)\n");
         } else if (text_equals(line, "version")) {
             write_string(SHELL_VERSION "\n");
+        } else if (command_is(line, "script")) {
+            run_script(skip_spaces(line + 6));
         } else if (text_equals(line, "sysinfo")) {
             system_report(ELOQUENCE_SYSTEM_REPORT_SYSINFO);
         } else if (text_equals(line, "meminfo")) {

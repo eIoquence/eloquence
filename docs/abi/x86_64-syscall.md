@@ -49,6 +49,7 @@ accepts a domain ID.
 | 20 | `PROCESS_KILL` | `RDI`: process ID | Terminates the caller with status 137 only when the ID is the caller's current process ID |
 | 21 | `PROCESS_EXEC` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads and runs a static ELF from the FAT32 root synchronously as a child |
 | 22 | `PROCESS_SPAWN` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads a static ELF as a runnable child; low 32 bits of `RAX` contain its PID |
+| 23 | `FS_READ_CHUNK` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension, `RDX`: byte offset | `RAX[63:32]`: result; `RAX[31:30]`: byte count; `RAX[23:0]`: up to 3 file bytes packed little-endian |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -74,6 +75,10 @@ so power loss during a mutation can leave the volume inconsistent. Directory
 creation and file operations are root-only; the shell has no subdirectory path
 traversal yet. `FS_TOUCH` leaves an existing file intact, while `FS_WRITE_BEGIN`
 replaces it on commit.
+`FS_READ_CHUNK` reads up to three bytes from the root FAT32 volume at the
+requested byte offset; the top two bits of the low half contain the returned
+byte count. End of file is reported with
+`ELOQUENCE_SYSCALL_RESULT_END_OF_FILE`.
 
 `PROCESS_LIST` reports up to 16 most recent process records, including PID,
 parent PID, state, exit status, and runtime ticks. `PROCESS_KILL` accepts the

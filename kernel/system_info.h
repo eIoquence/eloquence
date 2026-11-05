@@ -9,6 +9,9 @@
 bool kernel_system_report(uint64_t report);
 bool kernel_system_file_list(uint64_t device_index, uint64_t partition_number);
 bool kernel_system_file_cat(uint64_t packed_name, uint64_t packed_extension);
+uint32_t kernel_system_file_read_chunk(uint64_t packed_name,
+                                      uint64_t packed_extension,
+                                      uint64_t offset, uint32_t *data);
 bool kernel_system_file_stat(uint64_t packed_name, uint64_t packed_extension);
 bool kernel_system_file_create(uint64_t packed_name,
                                uint64_t packed_extension);

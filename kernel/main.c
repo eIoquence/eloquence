@@ -884,6 +884,42 @@ bool kernel_system_file_cat(uint64_t packed_name,
     return true;
 }
 
+uint32_t kernel_system_file_read_chunk(uint64_t packed_name,
+                                      uint64_t packed_extension,
+                                      uint64_t offset, uint32_t *data) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    char path[VFS_NAME_CAPACITY + 1] = "/";
+    uint32_t bytes_read = 0;
+    if (data == 0 || offset > sizeof(fat32_file_buffer)
+        || !decode_short_name(packed_name, packed_extension, name)) {
+        return ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT;
+    }
+    size_t length = 0;
+    while (name[length] != '\0' && length < VFS_NAME_CAPACITY) {
+        path[length + 1] = name[length];
+        length++;
+    }
+    path[length + 1] = '\0';
+    if (!mount_shell_vfs()
+        || !vfs_read_file(path, fat32_file_buffer,
+                          sizeof(fat32_file_buffer), &bytes_read)) {
+        return ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT;
+    }
+    if (offset >= bytes_read) {
+        return ELOQUENCE_SYSCALL_RESULT_END_OF_FILE;
+    }
+    *data = 0;
+    uint32_t count = bytes_read - (uint32_t)offset;
+    if (count > 3) {
+        count = 3;
+    }
+    for (uint32_t i = 0; i < count; i++) {
+        *data |= (uint32_t)fat32_file_buffer[offset + i] << (i * 8);
+    }
+    *data |= count << 30;
+    return ELOQUENCE_SYSCALL_RESULT_OK;
+}
+
 bool kernel_system_file_stat(uint64_t packed_name,
                              uint64_t packed_extension) {
     char name[FAT32_SHORT_NAME_LENGTH];

@@ -73,6 +73,12 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
+        case ELOQUENCE_SYSCALL_FS_READ_CHUNK: {
+            uint32_t data = 0;
+            uint32_t result = kernel_system_file_read_chunk(
+                frame->rdi, frame->rsi, frame->rdx, &data);
+            return pack_result(result, data);
+        }
         case ELOQUENCE_SYSCALL_FS_STAT:
             return pack_result(kernel_system_file_stat(frame->rdi, frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
