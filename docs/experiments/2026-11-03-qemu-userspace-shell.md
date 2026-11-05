@@ -47,4 +47,6 @@ clear/home sequence, `echo` preserved multiword arguments, and all six system
 reports returned kernel-sourced data. `meminfo` labels its value as total
 usable physical memory and explicitly does not claim it is free memory. The
 generated QEMU FAT32 fixture is refreshed by each `make run` so shell changes
-are not silently tested against a stale disk image.
+are not silently tested against a stale disk image. Unique built-in prefixes
+complete with Tab, and the Up arrow recalls the previous non-empty command;
+both behaviors were exercised in QEMU.

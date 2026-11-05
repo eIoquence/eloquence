@@ -62,6 +62,66 @@ static bool command_is(const char *line, const char *name) {
     return *name == '\0' && (*line == '\0' || *line == ' ' || *line == '\t');
 }
 
+static size_t text_length(const char *text) {
+    size_t length = 0;
+    while (text[length] != '\0') {
+        length++;
+    }
+    return length;
+}
+
+static bool has_prefix(const char *text, const char *prefix) {
+    while (*prefix != '\0') {
+        if (*text++ != *prefix++) {
+            return false;
+        }
+    }
+    return true;
+}
+
+static void recall_line(char *line, size_t *length, size_t capacity,
+                        const char *history) {
+    while (*length != 0) {
+        (*length)--;
+        erase_character();
+    }
+    while (history[*length] != '\0' && *length + 1 < capacity) {
+        line[*length] = history[*length];
+        write_char(line[*length]);
+        (*length)++;
+    }
+    line[*length] = '\0';
+}
+
+static void complete_command(char *line, size_t *length, size_t capacity) {
+    static const char *const commands[] = {
+        "help", "clear", "echo", "uname", "uptime", "version",
+        "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
+        "bootinfo", "about", "exit"
+    };
+    const char *match = 0;
+    size_t matches = 0;
+
+    if (*length == 0) {
+        return;
+    }
+    for (size_t i = 0; i < sizeof(commands) / sizeof(commands[0]); i++) {
+        if (has_prefix(commands[i], line)) {
+            match = commands[i];
+            matches++;
+        }
+    }
+    if (matches != 1) {
+        return;
+    }
+    match += *length;
+    while (*match != '\0' && *length + 1 < capacity) {
+        line[*length] = *match++;
+        write_char(line[(*length)++]);
+    }
+    line[*length] = '\0';
+}
+
 static bool text_equals(const char *left, const char *right) {
     while (*left != '\0' && *left == *right) {
         left++;
@@ -70,9 +130,10 @@ static bool text_equals(const char *left, const char *right) {
     return *left == '\0' && *right == '\0';
 }
 
-static void read_line(char *line, size_t capacity) {
+static void read_line(char *line, size_t capacity, const char *history) {
     size_t length = 0;
     bool skip_line_feed = false;
+    uint8_t escape_state = 0;
 
     for (;;) {
         uint64_t result = user_syscall(ELOQUENCE_SYSCALL_CONSOLE_READ_CHAR,
@@ -87,6 +148,17 @@ static void read_line(char *line, size_t capacity) {
         }
 
         char value = (char)(uint8_t)result;
+        if (escape_state != 0) {
+            if (escape_state == 1 && value == '[') {
+                escape_state = 2;
+                continue;
+            }
+            if (escape_state == 2 && value == 'A') {
+                recall_line(line, &length, capacity, history);
+            }
+            escape_state = 0;
+            continue;
+        }
         if (skip_line_feed) {
             skip_line_feed = false;
             if (value == '\n') {
@@ -98,6 +170,14 @@ static void read_line(char *line, size_t capacity) {
             line[length] = '\0';
             write_char('\n');
             return;
+        }
+        if ((uint8_t)value == 0x1b) {
+            escape_state = 1;
+            continue;
+        }
+        if (value == '\t') {
+            complete_command(line, &length, capacity);
+            continue;
         }
         if (value == '\b' || (uint8_t)value == 0x7f) {
             if (length != 0) {
@@ -124,11 +204,18 @@ static void read_line(char *line, size_t capacity) {
 
 __attribute__((noreturn)) void _start(void) {
     char line[SHELL_LINE_CAPACITY];
+    char history[SHELL_LINE_CAPACITY] = {0};
 
     write_string("Eloquence user shell. Type 'help'.\n");
     for (;;) {
         write_string("user> ");
-        read_line(line, sizeof(line));
+        read_line(line, sizeof(line), history);
+        if (line[0] != '\0') {
+            size_t length = text_length(line);
+            for (size_t i = 0; i <= length; i++) {
+                history[i] = line[i];
+            }
+        }
         if (text_equals(line, "help")) {
             write_string("Commands: help, clear, echo TEXT, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, about, exit\n");
         } else if (text_equals(line, "clear")) {

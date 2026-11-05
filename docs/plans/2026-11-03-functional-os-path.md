@@ -53,8 +53,9 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    separate compiled `SHELL.ELF` auto-starts from the first FAT32 partition
    and supports core shell commands plus `sysinfo`, `meminfo`, `cpuinfo`,
    `devinfo`, `irqinfo`, and `bootinfo` reports through scalar requests.
-   Backspace/Ctrl-U editing works. The ABI remains experimental; buffering,
-   history, parser expansion, and filesystem commands remain open.
+   Backspace/Ctrl-U editing, one-command history, and unique built-in Tab
+   completion work. The ABI remains experimental; buffering, a full parser,
+   and filesystem commands remain open.
 7. Scheduler and IPC, then isolated device services, network, and
    multi-architecture runtime work.
 
