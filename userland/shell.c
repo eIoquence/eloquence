@@ -5,6 +5,7 @@
 #include "eloquence/syscall_abi.h"
 
 #define SHELL_LINE_CAPACITY 80U
+#define SHELL_PIPELINE_CAPACITY 256U
 #define TIMER_FREQUENCY_HZ 100U
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
 
@@ -224,6 +225,151 @@ static bool text_equals(const char *left, const char *right) {
     return *left == '\0' && *right == '\0';
 }
 
+static char *skip_spaces(char *text) {
+    while (*text == ' ' || *text == '\t') {
+        text++;
+    }
+    return text;
+}
+
+static void append_text(char *buffer, size_t capacity, size_t *length,
+                        const char *text) {
+    while (*text != '\0' && *length + 1 < capacity) {
+        buffer[(*length)++] = *text++;
+    }
+    buffer[*length] = '\0';
+}
+
+static bool run_pipeline(char *line) {
+    char output[SHELL_PIPELINE_CAPACITY];
+    char input[SHELL_PIPELINE_CAPACITY];
+    char *stages[8];
+    size_t stage_count = 0;
+    char *cursor = line;
+    output[0] = '\0';
+    input[0] = '\0';
+
+    while (stage_count < sizeof(stages) / sizeof(stages[0])) {
+        stages[stage_count++] = cursor;
+        while (*cursor != '\0' && *cursor != '|') {
+            cursor++;
+        }
+        if (*cursor == '\0') {
+            break;
+        }
+        *cursor++ = '\0';
+    }
+    if (*cursor != '\0' || stage_count < 2) {
+        write_string("Pipeline: up to 8 stages are supported.\n");
+        return true;
+    }
+
+    for (size_t stage = 0; stage < stage_count; stage++) {
+        char *command = skip_spaces(stages[stage]);
+        char *end = command + text_length(command);
+        while (end > command && (end[-1] == ' ' || end[-1] == '\t')) {
+            *--end = '\0';
+        }
+        output[0] = '\0';
+        size_t output_length = 0;
+        if (command_is(command, "echo")) {
+            append_text(output, sizeof(output), &output_length,
+                        skip_spaces(command + 4));
+            append_text(output, sizeof(output), &output_length, "\n");
+        } else if (text_equals(command, "uname")) {
+            append_text(output, sizeof(output), &output_length,
+                        "Eloquence x86_64\n");
+        } else if (text_equals(command, "version")) {
+            append_text(output, sizeof(output), &output_length,
+                        SHELL_VERSION "\n");
+        } else if (command_is(command, "grep")) {
+            char *pattern = skip_spaces(command + 4);
+            if (*pattern == '\0' || stage == 0) {
+                write_string("Usage: producer | grep TEXT\n");
+                return true;
+            }
+            size_t pattern_length = text_length(pattern);
+            const char *line_start = input;
+            while (*line_start != '\0') {
+                const char *line_end = line_start;
+                while (*line_end != '\0' && *line_end != '\n') {
+                    line_end++;
+                }
+                size_t line_length = (size_t)(line_end - line_start);
+                bool found = false;
+                for (size_t i = 0; i + pattern_length <= line_length; i++) {
+                    size_t j = 0;
+                    while (j < pattern_length && line_start[i + j] == pattern[j]) {
+                        j++;
+                    }
+                    if (j == pattern_length) {
+                        found = true;
+                        break;
+                    }
+                }
+                if (found) {
+                    for (size_t i = 0; i < line_length; i++) {
+                        char one[2] = {line_start[i], '\0'};
+                        append_text(output, sizeof(output), &output_length, one);
+                    }
+                    append_text(output, sizeof(output), &output_length, "\n");
+                }
+                line_start = *line_end == '\n' ? line_end + 1 : line_end;
+            }
+        } else if (text_equals(command, "wc")) {
+            size_t bytes = text_length(input);
+            size_t lines = 0;
+            size_t words = 0;
+            bool in_word = false;
+            for (size_t i = 0; i < bytes; i++) {
+                char value = input[i];
+                if (value == '\n') {
+                    lines++;
+                }
+                if (value == ' ' || value == '\t' || value == '\n') {
+                    in_word = false;
+                } else if (!in_word) {
+                    words++;
+                    in_word = true;
+                }
+            }
+            append_text(output, sizeof(output), &output_length, "lines ");
+            // Format numbers locally because pipeline output stays buffered.
+            char number[21];
+            size_t digits = 0;
+            uint64_t value = lines;
+            do { number[digits++] = (char)('0' + value % 10); value /= 10; }
+            while (value != 0);
+            while (digits != 0) { char one[2] = {number[--digits], '\0'};
+                append_text(output, sizeof(output), &output_length, one); }
+            append_text(output, sizeof(output), &output_length, " words ");
+            value = words;
+            digits = 0;
+            do { number[digits++] = (char)('0' + value % 10); value /= 10; }
+            while (value != 0);
+            while (digits != 0) { char one[2] = {number[--digits], '\0'};
+                append_text(output, sizeof(output), &output_length, one); }
+            append_text(output, sizeof(output), &output_length, " bytes ");
+            value = bytes;
+            digits = 0;
+            do { number[digits++] = (char)('0' + value % 10); value /= 10; }
+            while (value != 0);
+            while (digits != 0) { char one[2] = {number[--digits], '\0'};
+                append_text(output, sizeof(output), &output_length, one); }
+            append_text(output, sizeof(output), &output_length, "\n");
+        } else {
+            write_string("Pipeline supports echo, uname, version, grep and wc.\n");
+            return true;
+        }
+        size_t input_length = text_length(output);
+        for (size_t i = 0; i <= input_length; i++) {
+            input[i] = output[i];
+        }
+    }
+    write_string(output);
+    return true;
+}
+
 static bool parse_process_id(const char *text, uint64_t *process_id) {
     uint64_t value = 0;
     if (*text == '\0' || process_id == 0) {
@@ -326,8 +472,19 @@ __attribute__((noreturn)) void _start(void) {
                 history[i] = line[i];
             }
         }
+        bool has_pipe = false;
+        for (size_t i = 0; line[i] != '\0'; i++) {
+            if (line[i] == '|') {
+                has_pipe = true;
+                break;
+            }
+        }
+        if (has_pipe) {
+            (void)run_pipeline(line);
+            continue;
+        }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo TEXT > FILE, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat FILE, stat FILE, touch FILE, rm FILE, mkdir DIR, pwd, cd /, ps, exec FILE.ELF, spawn FILE.ELF, kill PID, about, exit\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, exec, spawn, kill, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
