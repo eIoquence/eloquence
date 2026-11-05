@@ -51,8 +51,9 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    **Partially implemented:** ring-3 programs can read one serial character
    non-blockingly and write validated ASCII one character per syscall. A
    separate compiled `SHELL.ELF` auto-starts from the first FAT32 partition
-   and supports `help`, `about`, `echo`, and `exit`. Editing, buffering, and a
-   stable ABI remain open.
+   and supports `help`, `clear`, `echo`, `uname`, `uptime`, `version`, `about`,
+   and `exit`, with Backspace/Ctrl-U editing. The ABI remains experimental;
+   buffering, history, parser expansion, and inspection calls remain open.
 7. Scheduler and IPC, then isolated device services, network, and
    multi-architecture runtime work.
 

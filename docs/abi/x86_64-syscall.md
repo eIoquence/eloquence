@@ -32,6 +32,8 @@ accepts a domain ID.
 | 3 | `MMIO_REVOKE` | `RDI`: handle | `RAX[31:0]`: result code |
 | 4 | `CONSOLE_WRITE_CHAR` | `RDI`: ASCII value | `RAX[63:32]`: result code |
 | 5 | `CONSOLE_READ_CHAR` | None | `RAX[63:32]`: result code; `RAX[7:0]`: character on success |
+| 6 | `CONSOLE_CLEAR` | None | `RAX[63:32]`: result code |
+| 7 | `UPTIME_TICKS` | None | `RAX`: monotonic timer ticks since timer initialization |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -41,8 +43,10 @@ Console calls use `ELOQUENCE_SYSCALL_RESULT_*` values from the public
 `include/eloquence/syscall_abi.h`: success is 0, invalid output character is 1,
 and an empty non-blocking input queue is 2 (`WOULD_BLOCK`). Console output
 accepts printable ASCII, line feed, carriage return, and horizontal tab; line
-feed is translated to CRLF. Both calls use scalar arguments and never follow a
-user pointer. A program can emit or read one character per call.
+feed is translated to CRLF. `CONSOLE_CLEAR` emits the terminal clear/home
+sequence through the kernel serial console. These calls use scalar arguments
+and never follow a user pointer. `UPTIME_TICKS` returns ticks at the configured
+100 Hz timer rate.
 
 The handle encoding is `generation[63:32]`, reserved zero bits `[31:8]`, and
 slot `[7:0]`. Invalid reserved bits are rejected. Handles are currently

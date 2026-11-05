@@ -201,10 +201,8 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	rm -rf build/iso-root
 
 qemu-disk: build/userland/shell.elf
-	@if [ ! -f "$(QEMU_DISK)" ]; then \
-		$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
-			--shell build/userland/shell.elf; \
-	fi
+	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
+		--shell build/userland/shell.elf --force
 
 run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \
