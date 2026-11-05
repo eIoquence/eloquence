@@ -78,6 +78,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
 	build/lib/memory.o build/memory/page_allocator.o \
 	build/storage/block_device.o build/storage/gpt.o build/storage/fat32.o \
+	build/storage/vfs.o \
 	build/monitor/serial_shell.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/drivers/virtio/virtio_blk.o \

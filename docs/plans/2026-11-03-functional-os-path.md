@@ -45,10 +45,10 @@ commands are read-only except `halt`, and no dynamic allocation is required.
    table teardown remain open.
 5. VirtIO Block, primary/backup GPT handling, and read-only FAT32 access.
    **Partially implemented:** VirtIO legacy PCI block, primary GPT, FAT32 root
-   listing, and bounded short-name file reads, exposed through shell `ls` and
-   `cat`, and `stat` commands. `pwd` reports the fixed root directory; `cd /`
-   is accepted. VFS, subdirectories, backup GPT recovery, and all filesystem
-   writes remain open.
+   listing, and bounded short-name file reads behind a single-root VFS,
+   exposed through shell `ls`, `cat`, and `stat`. `pwd` reports `/`; `cd /` is
+   accepted. Multiple mounts, subdirectories, backup GPT recovery, and all
+   filesystem writes remain open.
 6. Minimal user-facing console ABI.
    **Partially implemented:** ring-3 programs can read one serial character
    non-blockingly and write validated ASCII one character per syscall. A

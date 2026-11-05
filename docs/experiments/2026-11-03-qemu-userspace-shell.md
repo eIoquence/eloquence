@@ -51,6 +51,7 @@ are not silently tested against a stale disk image. Unique built-in prefixes
 complete with Tab, and the Up arrow recalls the previous non-empty command;
 both behaviors were exercised in QEMU. `ls`, `cat HELLO.TXT`, and `pwd` also
 worked through kernel-mediated, read-only FAT32 access. `cat` accepts bounded
-8.3 names, and `stat` reports root entry type and size. `pwd` works at `/`;
+8.3 names, and `stat` reports root entry type and size. These operations now
+pass through a single-root VFS adapter backed by FAT32. `pwd` works at `/`;
 `cd` only confirms the root because there are no subdirectories in the shell
-interface yet. There is no VFS or write support.
+interface yet. Multiple mounts and write support are absent.
