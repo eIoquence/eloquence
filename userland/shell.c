@@ -7,6 +7,7 @@
 #define SHELL_LINE_CAPACITY 80U
 #define SHELL_PIPELINE_CAPACITY 256U
 #define SHELL_SCRIPT_CAPACITY 2048U
+#define SHELL_SCRIPT_VARIABLES 8U
 #define TIMER_FREQUENCY_HZ 100U
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
 
@@ -371,9 +372,76 @@ static bool run_pipeline(char *line) {
     return true;
 }
 
-static void run_script_line(char *line) {
+struct shell_script_variable {
+    bool used;
+    char name[16];
+    char value[SHELL_LINE_CAPACITY];
+};
+
+static bool variable_name_char(char value) {
+    return (value >= 'A' && value <= 'Z')
+        || (value >= 'a' && value <= 'z')
+        || (value >= '0' && value <= '9') || value == '_';
+}
+
+static void run_script_line(char *line,
+                            struct shell_script_variable *variables) {
     char *command = skip_spaces(line);
     if (*command == '\0' || *command == '#') {
+        return;
+    }
+    if (command_is(command, "set")) {
+        char *assignment = skip_spaces(command + 3);
+        char *separator = assignment;
+        size_t name_length = 0;
+        while (*separator != '\0' && *separator != '=' && *separator != ' '
+               && *separator != '\t') {
+            if (!variable_name_char(*separator) || name_length + 1 >= 16) {
+                write_string("script: invalid variable name\n");
+                return;
+            }
+            separator++;
+            name_length++;
+        }
+        if (*separator != '=' || name_length == 0) {
+            write_string("Usage: set NAME=VALUE\n");
+            return;
+        }
+        size_t slot = SHELL_SCRIPT_VARIABLES;
+        for (size_t i = 0; i < SHELL_SCRIPT_VARIABLES; i++) {
+            if (variables[i].used) {
+                size_t j = 0;
+                while (j < name_length
+                       && variables[i].name[j] == assignment[j]) {
+                    j++;
+                }
+                if (j == name_length && variables[i].name[j] == '\0') {
+                    slot = i;
+                    break;
+                }
+            }
+            if (!variables[i].used && slot == SHELL_SCRIPT_VARIABLES) {
+                slot = i;
+            }
+        }
+        if (slot == SHELL_SCRIPT_VARIABLES) {
+            write_string("script: variable table is full\n");
+            return;
+        }
+        variables[slot].used = true;
+        for (size_t i = 0; i < name_length; i++) {
+            variables[slot].name[i] = assignment[i];
+        }
+        variables[slot].name[name_length] = '\0';
+        char *value = separator + 1;
+        size_t value_length = text_length(value);
+        if (value_length >= sizeof(variables[slot].value)) {
+            value_length = sizeof(variables[slot].value) - 1;
+        }
+        for (size_t i = 0; i < value_length; i++) {
+            variables[slot].value[i] = value[i];
+        }
+        variables[slot].value[value_length] = '\0';
         return;
     }
     for (char *cursor = command; *cursor != '\0'; cursor++) {
@@ -408,12 +476,90 @@ static void run_script_line(char *line) {
     }
 }
 
+static void run_script_commands(char *line,
+                                struct shell_script_variable *variables) {
+    char expanded[SHELL_LINE_CAPACITY];
+    char *command_start = line;
+    while (true) {
+        char *separator = command_start;
+        while (*separator != '\0' && *separator != ';') {
+            separator++;
+        }
+        bool more = *separator == ';';
+        if (more) {
+            *separator = '\0';
+        }
+        size_t output_length = 0;
+        for (size_t i = 0; command_start[i] != '\0';) {
+            if (command_start[i] != '$') {
+                if (output_length + 1 >= sizeof(expanded)) {
+                    write_string("script: expanded command exceeds 80 bytes\n");
+                    return;
+                }
+                expanded[output_length++] = command_start[i++];
+                continue;
+            }
+            size_t name_start = i + 1;
+            size_t name_end = name_start;
+            while (variable_name_char(command_start[name_end])) {
+                name_end++;
+            }
+            if (name_end == name_start) {
+                if (output_length + 1 >= sizeof(expanded)) {
+                    write_string("script: expanded command exceeds 80 bytes\n");
+                    return;
+                }
+                expanded[output_length++] = command_start[i++];
+                continue;
+            }
+            char name[16];
+            size_t name_length = name_end - name_start;
+            if (name_length >= sizeof(name)) {
+                write_string("script: variable name exceeds 15 bytes\n");
+                return;
+            }
+            for (size_t j = 0; j < name_length; j++) {
+                name[j] = command_start[name_start + j];
+            }
+            name[name_length] = '\0';
+            const char *value = "";
+            for (size_t j = 0; j < SHELL_SCRIPT_VARIABLES; j++) {
+                if (variables[j].used && text_equals(variables[j].name, name)) {
+                    value = variables[j].value;
+                    break;
+                }
+            }
+            size_t value_length = text_length(value);
+            if (output_length + value_length >= sizeof(expanded)) {
+                write_string("script: expanded command exceeds 80 bytes\n");
+                return;
+            }
+            for (size_t j = 0; j < value_length; j++) {
+                expanded[output_length++] = value[j];
+            }
+            i = name_end;
+        }
+        expanded[output_length] = '\0';
+        run_script_line(expanded, variables);
+        if (!more) {
+            return;
+        }
+        command_start = separator + 1;
+    }
+}
+
 static void run_script(const char *filename) {
     uint64_t packed_base;
     uint64_t packed_extension;
     char contents[SHELL_SCRIPT_CAPACITY];
+    struct shell_script_variable variables[SHELL_SCRIPT_VARIABLES];
     size_t length = 0;
     uint64_t offset = 0;
+    for (size_t i = 0; i < SHELL_SCRIPT_VARIABLES; i++) {
+        variables[i].used = false;
+        variables[i].name[0] = '\0';
+        variables[i].value[0] = '\0';
+    }
     if (!pack_filename(filename, &packed_base, &packed_extension)) {
         write_string("Usage: script SHORTNAME.TXT\n");
         return;
@@ -454,7 +600,7 @@ static void run_script(const char *filename) {
                     line[j] = contents[line_start + j];
                 }
                 line[line_length] = '\0';
-                run_script_line(line);
+                run_script_commands(line, variables);
             }
             if (i < length && contents[i] == '\r' && i + 1 < length
                 && contents[i + 1] == '\n') {
