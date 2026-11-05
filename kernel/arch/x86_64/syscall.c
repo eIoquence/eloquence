@@ -149,6 +149,20 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                (uint32_t)process_id);
         }
+        case ELOQUENCE_SYSCALL_PROCESS_WAIT: {
+            struct kernel_process_info process;
+            if (!kernel_process_get(frame->rdi, &process)
+                || process.parent_id != kernel_domain_current_id()) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            if (process.state != KERNEL_PROCESS_EXITED
+                && process.state != KERNEL_PROCESS_FAULTED) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)process.exit_status);
+        }
         default:
             break;
     }

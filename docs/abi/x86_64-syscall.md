@@ -50,6 +50,7 @@ accepts a domain ID.
 | 21 | `PROCESS_EXEC` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads and runs a static ELF from the FAT32 root synchronously as a child |
 | 22 | `PROCESS_SPAWN` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension | Loads a static ELF as a runnable child; low 32 bits of `RAX` contain its PID |
 | 23 | `FS_READ_CHUNK` | `RDI`: packed 8-character base name, `RSI`: packed 3-character extension, `RDX`: byte offset | `RAX[63:32]`: result; `RAX[31:30]`: byte count; `RAX[23:0]`: up to 3 file bytes packed little-endian |
+| 24 | `PROCESS_WAIT` | `RDI`: child process ID | `RAX[63:32]`: result (`WOULD_BLOCK` while live); `RAX[31:0]`: exit status after completion |
 
 For calls 1–3, result codes are the `mmio_capability_result` values declared in
 `kernel/capability/mmio_capability.h`. An invalid syscall number returns
@@ -85,6 +86,10 @@ parent PID, state, exit status, and runtime ticks. `PROCESS_KILL` accepts the
 caller or another live scheduler-managed process. `PROCESS_EXEC` blocks its
 caller until the child exits, then resumes it. `PROCESS_SPAWN` creates a
 separate address space and kernel syscall stack and returns immediately. The
+`PROCESS_WAIT` call accepts only a child owned by the current process and
+returns `WOULD_BLOCK` until that child exits or faults. The shell's `wait PID`
+polls this call while the timer scheduler continues to run other tasks; `jobs`
+shows the bounded process table. The
 x86-64 scheduler uses the 100 Hz timer for round-robin preemption. This remains
 a single-CPU prototype with a fixed process limit; there is no `wait`, IPC,
 SMP scheduling, or stable syscall compatibility guarantee.

@@ -22,6 +22,8 @@
   next `ps` showed it running and both child records exited.
 - `spawn HELLO.ELF` returned PID 4 while the parent shell continued. The child
   printed its message and exited with status 42; `ps` retained its exit record.
+- `wait 4` returned `Process 4 exited with status 42`; `jobs` showed the shell
+  and completed child in the bounded process table.
 - `spawn SPIN.ELF` launched a CPU-bound infinite loop as PID 5. The timer
   preempted it and resumed the interactive shell; `ps` showed PID 5 runnable
   with increasing runtime ticks while PID 3 remained running. `kill 5` stopped
@@ -35,7 +37,11 @@
 The kernel keeps the 16 most recent process records. PID allocation is
 monotonic within a boot. The 100 Hz x86-64 timer saves the user register and
 iret frame, rotates runnable processes, switches CR3 and the per-process
-kernel stack, then restores the selected context. `wait`, pipes, and IPC remain
-unimplemented. The scheduler is single-CPU and fixed-capacity; the initial
+kernel stack, then restores the selected context. `wait` is implemented as
+parent-checked polling; pipes and IPC remain unimplemented. The scheduler is
+single-CPU and fixed-capacity; the initial
 root process owns its spawned task tree and tears it down on exit. Runtime
-behavior was verified only under this QEMU TCG configuration.
+behavior was verified only under this QEMU TCG configuration. `wait` currently
+polls the child record and yields through timer preemption; it is not a blocked
+kernel wait queue. `jobs` currently prints the process table, including
+completed records.

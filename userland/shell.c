@@ -194,7 +194,8 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "help", "clear", "echo", "uname", "uptime", "version",
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
-        "ps", "kill", "exec", "spawn", "script", "about", "exit"
+        "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
+        "about", "exit"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -725,7 +726,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, ls, cat, stat, touch, rm, mkdir, pwd, cd, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -784,6 +785,38 @@ __attribute__((noreturn)) void _start(void) {
             system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
         } else if (text_equals(line, "ps")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_PROCESS_LIST, 0, 0, 0);
+        } else if (text_equals(line, "jobs")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_PROCESS_LIST, 0, 0, 0);
+        } else if (command_is(line, "wait")) {
+            const char *argument = line + 4;
+            uint64_t process_id;
+            while (*argument == ' ' || *argument == '\t') {
+                argument++;
+            }
+            if (!parse_process_id(argument, &process_id)) {
+                write_string("Usage: wait PID (a child started by spawn)\n");
+            } else {
+                uint64_t result;
+                do {
+                    result = user_syscall(ELOQUENCE_SYSCALL_PROCESS_WAIT,
+                                          process_id, 0, 0);
+                    if ((uint32_t)(result >> 32)
+                        == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK) {
+                        __asm__ volatile ("pause");
+                    }
+                } while ((uint32_t)(result >> 32)
+                         == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("wait: PID is not a child process\n");
+                } else {
+                    write_string("Process ");
+                    write_unsigned(process_id);
+                    write_string(" exited with status ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
         } else if (command_is(line, "kill")) {
             const char *argument = line + 4;
             uint64_t process_id;
