@@ -293,6 +293,38 @@ static bool run_pipeline(char *line) {
         } else if (text_equals(command, "version")) {
             append_text(output, sizeof(output), &output_length,
                         SHELL_VERSION "\n");
+        } else if (command_is(command, "cat")) {
+            char *filename = skip_spaces(command + 3);
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string("Usage: cat SHORTNAME.EXT\n");
+                return true;
+            }
+            uint32_t offset = 0;
+            for (;;) {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_FS_READ_CHUNK,
+                                               packed_base, packed_extension,
+                                               offset);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_END_OF_FILE) {
+                    break;
+                }
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("cat: read failed\n");
+                    return true;
+                }
+                uint32_t data = (uint32_t)result;
+                uint32_t count = (data >> 30) & 3U;
+                if (count == 0) {
+                    break;
+                }
+                for (uint32_t i = 0; i < count; i++) {
+                    char one[2] = {(char)(uint8_t)((data >> (i * 8)) & 0xff), '\0'};
+                    append_text(output, sizeof(output), &output_length, one);
+                }
+                offset += count;
+            }
         } else if (command_is(command, "grep")) {
             char *pattern = skip_spaces(command + 4);
             if (*pattern == '\0' || stage == 0) {
@@ -1000,6 +1032,34 @@ __attribute__((noreturn)) void _start(void) {
                 }
             }
             *name_end = saved;
+        }
+        /* redirect < transformation */
+        {
+            char *lt = line;
+            while (*lt != '\0' && *lt != '<') lt++;
+            if (*lt == '<') {
+                *lt = '\0';
+                char *file = lt + 1;
+                while (*file == ' ' || *file == '\t') file++;
+                char *cmd = line;
+                while (*cmd == ' ' || *cmd == '\t') cmd++;
+                char buffer[SHELL_LINE_CAPACITY];
+                size_t bi = 0;
+                const char *prefix = "cat ";
+                for (size_t i = 0; prefix[i] != '\0' && bi + 1 < SHELL_LINE_CAPACITY; i++) {
+                    buffer[bi++] = prefix[i];
+                }
+                for (size_t i = 0; file[i] != '\0' && bi + 1 < SHELL_LINE_CAPACITY; i++) {
+                    buffer[bi++] = file[i];
+                }
+                if (bi + 1 < SHELL_LINE_CAPACITY) buffer[bi++] = '|';
+                if (bi + 1 < SHELL_LINE_CAPACITY) buffer[bi++] = ' ';
+                for (size_t i = 0; cmd[i] != '\0' && bi + 1 < SHELL_LINE_CAPACITY; i++) {
+                    buffer[bi++] = cmd[i];
+                }
+                buffer[bi] = '\0';
+                for (size_t i = 0; i <= bi; i++) line[i] = buffer[i];
+            }
         }
         bool has_pipe = false;
         for (size_t i = 0; line[i] != '\0'; i++) {
