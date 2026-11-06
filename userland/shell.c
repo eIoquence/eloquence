@@ -1097,6 +1097,17 @@ __attribute__((noreturn)) void _start(void) {
                 for (size_t i = 0; i <= bi; i++) line[i] = buffer[i];
             }
         }
+        /* elo (sudo-like) prefix stripping */
+        if (command_is(line, "elo")) {
+            char *rest = line + 3;
+            while (*rest == ' ' || *rest == '\t') rest++;
+            size_t ri = 0;
+            while (rest[ri] != '\0') {
+                line[ri] = rest[ri];
+                ri++;
+            }
+            line[ri] = '\0';
+        }
         bool has_pipe = false;
         for (size_t i = 0; line[i] != '\0'; i++) {
             if (line[i] == '|') {
@@ -1109,7 +1120,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
