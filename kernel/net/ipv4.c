@@ -1,6 +1,7 @@
 #include <stdint.h>
 
 #include "arp.h"
+#include "firewall.h"
 #include "ipv4.h"
 #include "netif.h"
 
@@ -68,6 +69,9 @@ bool ipv4_input(const uint8_t eth_src[ETH_ADDR_LEN],
     if (destination_ip != our_ip) {
         return false;
     }
+    if (!firewall_check(source_ip, destination_ip, protocol)) {
+        return true; /* dropped by firewall */
+    }
     arp_cache_add(source_ip, eth_src);
 
     if (protocol == IPV4_PROTOCOL_ICMP) {
@@ -117,6 +121,9 @@ bool ipv4_input(const uint8_t eth_src[ETH_ADDR_LEN],
             reply_icmp[2] = (uint8_t)(checksum >> 8);
             reply_icmp[3] = (uint8_t)checksum;
 
+            if (!firewall_check(our_ip, source_ip, IPV4_PROTOCOL_ICMP)) {
+                return true;
+            }
             return netif_transmit(frame, ETH_HEADER_LEN + total_length);
         }
     }
@@ -170,6 +177,9 @@ bool ipv4_output(uint8_t protocol, uint32_t destination_ip,
     for (uint32_t i = 0; i < payload_length; i++) {
         packet[IPV4_HEADER_LEN + i] = payload[i];
     }
+    if (!firewall_check(our_ip, destination_ip, protocol)) {
+        return false;
+    }
     return netif_transmit(frame, ETH_HEADER_LEN + total_length);
 }
 
@@ -177,6 +187,9 @@ bool ipv4_send_icmp_echo(uint32_t destination_ip) {
     uint8_t our_mac[ETH_ADDR_LEN];
     uint32_t our_ip;
     netif_get_addresses(our_mac, &our_ip);
+    if (!firewall_check(our_ip, destination_ip, IPV4_PROTOCOL_ICMP)) {
+        return false;
+    }
     uint8_t next_hop_mac[ETH_ADDR_LEN];
     if (!arp_resolve(destination_ip, next_hop_mac)) {
         arp_request(destination_ip);

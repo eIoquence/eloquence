@@ -204,7 +204,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -316,6 +316,32 @@ static bool parse_ipv4(const char *text, uint32_t *value) {
     }
     *value = result;
     return true;
+}
+
+static uint8_t parse_proto(const char *text) {
+    if (text_equals(text, "icmp")) {
+        return 1U;
+    }
+    if (text_equals(text, "tcp")) {
+        return 6U;
+    }
+    if (text_equals(text, "udp")) {
+        return 17U;
+    }
+    if (text_equals(text, "any")) {
+        return 0U;
+    }
+    return 0xffU;
+}
+
+static uint8_t parse_fw_action(const char *text) {
+    if (text_equals(text, "allow")) {
+        return 1U;
+    }
+    if (text_equals(text, "deny")) {
+        return 0U;
+    }
+    return 0xffU;
 }
 
 static void write_hex_byte(uint8_t value) {
@@ -1228,7 +1254,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1845,10 +1871,16 @@ __attribute__((noreturn)) void _start(void) {
                 write_string("net: packet ");
                 write_unsigned(length);
                 write_string(" bytes:\n");
-                for (uint32_t offset = 0; offset < length; offset += 4U) {
+                uint32_t offset = 0;
+                for (;;) {
                     result = user_syscall(ELOQUENCE_SYSCALL_NET_READ_BUFFER,
-                                          offset, 4U, 0);
-                    if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+                                          offset, 3U, 0);
+                    if ((uint32_t)(result >> 32)
+                        == ELOQUENCE_SYSCALL_RESULT_END_OF_FILE) {
+                        break;
+                    }
+                    if ((uint32_t)(result >> 32)
+                        != ELOQUENCE_SYSCALL_RESULT_OK) {
                         break;
                     }
                     uint32_t data = (uint32_t)result;
@@ -1858,8 +1890,12 @@ __attribute__((noreturn)) void _start(void) {
                         write_hex_byte((uint8_t)(data >> (i * 8)));
                         write_char(' ');
                     }
-                    write_char('\n');
+                    offset += count;
+                    if (offset >= length) {
+                        break;
+                    }
                 }
+                write_char('\n');
             }
         } else if (command_is(line, "net-ping")) {
             const char *text = line + 8;
@@ -1879,6 +1915,127 @@ __attribute__((noreturn)) void _start(void) {
                     write_string("net: ping pending (resolving address)\n");
                 } else {
                     write_string("net: ping failed\n");
+                }
+            }
+        } else if (text_equals(line, "fw-list")) {
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_FW_LIST, 0, 0, 0);
+            uint32_t status = (uint32_t)(result >> 32);
+            if (status == ELOQUENCE_SYSCALL_RESULT_DENIED) {
+                write_string("fw: denied (need cap admin)\n");
+            } else if (status != ELOQUENCE_SYSCALL_RESULT_OK) {
+                write_string("fw: list failed\n");
+            } else {
+                write_string("Firewall rules:\n");
+                uint32_t offset = 0;
+                for (;;) {
+                    result = user_syscall(ELOQUENCE_SYSCALL_NET_READ_BUFFER,
+                                          offset, 3U, 0);
+                    if ((uint32_t)(result >> 32)
+                        == ELOQUENCE_SYSCALL_RESULT_END_OF_FILE) {
+                        break;
+                    }
+                    if ((uint32_t)(result >> 32)
+                        != ELOQUENCE_SYSCALL_RESULT_OK) {
+                        break;
+                    }
+                    uint32_t data = (uint32_t)result;
+                    uint32_t count = data >> 30;
+                    data &= 0x3fffffffU;
+                    for (uint32_t i = 0; i < count; i++) {
+                        write_char((char)(data >> (i * 8)));
+                    }
+                    offset += count;
+                }
+                write_char('\n');
+            }
+        } else if (command_is(line, "fw-rm")) {
+            char *cursor = line + 5;
+            char index_text[16];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(index_text)) {
+                index_text[ti++] = *cursor++;
+            }
+            index_text[ti] = '\0';
+            uint64_t index = 0;
+            if (!parse_number(index_text, &index)) {
+                write_string("Usage: fw-rm INDEX\n");
+            } else {
+                uint64_t result = user_syscall(
+                    ELOQUENCE_SYSCALL_FW_REMOVE, index, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_DENIED) {
+                    write_string("fw: denied (need cap admin)\n");
+                } else if (status == ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("fw: rule removed\n");
+                } else {
+                    write_string("fw: no such rule\n");
+                }
+            }
+        } else if (command_is(line, "fw-add")) {
+            char *cursor = line + 6;
+            char src_text[16];
+            char dst_text[16];
+            char proto_text[8];
+            char action_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(src_text)) {
+                src_text[ti++] = *cursor++;
+            }
+            src_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(dst_text)) {
+                dst_text[ti++] = *cursor++;
+            }
+            dst_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(proto_text)) {
+                proto_text[ti++] = *cursor++;
+            }
+            proto_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(action_text)) {
+                action_text[ti++] = *cursor++;
+            }
+            action_text[ti] = '\0';
+            uint32_t src_ip = 0;
+            uint32_t dst_ip = 0;
+            uint8_t protocol = parse_proto(proto_text);
+            uint8_t action = parse_fw_action(action_text);
+            if (!parse_ipv4(src_text, &src_ip)
+                || !parse_ipv4(dst_text, &dst_ip)
+                || protocol == 0xffU || action == 0xffU) {
+                write_string("Usage: fw-add SRC DST PROTO ACTION\n");
+            } else {
+                uint64_t result = user_syscall(
+                    ELOQUENCE_SYSCALL_FW_ADD, src_ip, dst_ip,
+                    ((uint64_t)protocol << 8) | action);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_DENIED) {
+                    write_string("fw: denied (need cap admin)\n");
+                } else if (status == ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("fw: rule added\n");
+                } else {
+                    write_string("fw: table full\n");
                 }
             }
         } else if (text_equals(line, "about")) {

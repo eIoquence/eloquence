@@ -4,6 +4,7 @@
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"
 #include "drivers/virtio/virtio_net.h"
+#include "net/firewall.h"
 #include "net/ipv4.h"
 #include "net/netif.h"
 #include "process/process.h"
@@ -281,8 +282,8 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             }
             uint32_t remaining = net_receive_length - (uint32_t)offset;
             uint32_t copy = count < remaining ? (uint32_t)count : remaining;
-            if (copy > 4U) {
-                copy = 4U;
+            if (copy > 3U) {
+                copy = 3U;
             }
             uint32_t data = 0;
             for (uint32_t i = 0; i < copy; i++) {
@@ -304,6 +305,55 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK,
                                0);
+        }
+        case ELOQUENCE_SYSCALL_FW_ADD: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_ADMIN_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            uint32_t src_ip = (uint32_t)frame->rdi;
+            uint32_t dst_ip = (uint32_t)frame->rsi;
+            uint8_t protocol = (uint8_t)((frame->rdx >> 8) & 0xffU);
+            uint8_t action = (uint8_t)(frame->rdx & 0xffU);
+            uint32_t index = firewall_add_rule(src_ip, dst_ip, protocol,
+                                               action);
+            if (index == (uint32_t)-1) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, index);
+        }
+        case ELOQUENCE_SYSCALL_FW_REMOVE: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_ADMIN_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            bool ok = firewall_remove_rule((uint32_t)frame->rdi);
+            return pack_result(ok ? ELOQUENCE_SYSCALL_RESULT_OK
+                                  : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        }
+        case ELOQUENCE_SYSCALL_FW_LIST: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_ADMIN_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            uint32_t pos = 0;
+            for (uint32_t i = 0; i < FIREWALL_MAX_RULES; i++) {
+                char line[64];
+                uint32_t len = firewall_format_rule(i, line, sizeof(line));
+                if (len == 0 || pos + len + 1 > sizeof(net_receive_buffer)) {
+                    continue;
+                }
+                for (uint32_t j = 0; j < len; j++) {
+                    net_receive_buffer[pos++] = line[j];
+                }
+                net_receive_buffer[pos++] = '\n';
+            }
+            net_receive_buffer[pos] = '\0';
+            net_receive_length = pos;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               firewall_rule_count());
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
             if (!kernel_domain_has(kernel_domain_current_id(),

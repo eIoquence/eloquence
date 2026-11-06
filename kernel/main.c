@@ -62,7 +62,7 @@ struct limine_page_allocator_context {
 static struct limine_page_allocator_context page_allocator_context;
 static struct gpt_partition discovered_partitions[GPT_MAX_PARTITIONS];
 static struct fat32_directory_entry fat32_entries[FAT32_MAX_DIRECTORY_ENTRIES];
-static uint8_t fat32_file_buffer[32768];
+static uint8_t fat32_file_buffer[65536];
 static struct fat32_volume shell_root_volume;
 static struct vfs_entry shell_vfs_entries[VFS_MAX_DIRECTORY_ENTRIES];
 static uint8_t shell_write_buffer[FAT32_MAX_FILE_WRITE_BYTES];
