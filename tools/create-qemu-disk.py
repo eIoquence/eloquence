@@ -310,6 +310,49 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
         put_u16(root, 218, atmosphere_cluster_base)
         put_u32(root, 220, len(atmosphere_elf))
         image.write(root)
+        image.seek(volume_offset + 7 * SECTOR_SIZE)
+        image.write(fs_info)
+
+        first_fat_sector = PARTITION_START + FAT_RESERVED_SECTORS
+        data_start = first_fat_sector + FAT_COUNT * (len(fat) // SECTOR_SIZE)
+        image.seek(data_start * SECTOR_SIZE)
+        root = bytearray(SECTOR_SIZE)
+        root[:11] = b"HELLO   TXT"
+        root[11] = 0x20
+        put_u16(root, 20, 0)
+        put_u16(root, 26, 3)
+        put_u32(root, 28, contents_size)
+        root[32:43] = b"HELLO   ELF"
+        root[43] = 0x20
+        put_u16(root, 52, 0)
+        put_u16(root, 58, 4)
+        put_u32(root, 60, len(hello_elf))
+        root[64:75] = b"SHELL   ELF"
+        root[75] = 0x20
+        put_u16(root, 84, 0)
+        put_u16(root, 90, 5)
+        put_u32(root, 92, len(shell_elf))
+        root[96:107] = b"SPIN    ELF"
+        root[107] = 0x20
+        put_u16(root, 116, 0)
+        put_u16(root, 122, spin_cluster)
+        put_u32(root, 124, len(spin_elf))
+        root[128:139] = b"CONTROL TXT"
+        root[139] = 0x20
+        put_u16(root, 148, 0)
+        put_u16(root, 154, script_cluster)
+        put_u32(root, 156, len(CONTROL_SCRIPT))
+        root[160:171] = b"IPCDMO  ELF"
+        root[171] = 0x20
+        put_u16(root, 180, 0)
+        put_u16(root, 186, demo_cluster_base)
+        put_u32(root, 188, len(demo_elf))
+        root[192:203] = b"ATMOSPH ELF"
+        root[203] = 0x20
+        put_u16(root, 212, 0)
+        put_u16(root, 218, atmosphere_cluster_base)
+        put_u32(root, 220, len(atmosphere_elf))
+        image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
         image.seek((data_start + 2) * SECTOR_SIZE)
@@ -334,6 +377,10 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
             put_u32(fat, cluster * 4, next_cluster)
             image.seek((data_start + cluster - 2) * SECTOR_SIZE)
             image.write(atmosphere_elf[offset : offset + SECTOR_SIZE])
+        image.seek(first_fat_sector * SECTOR_SIZE)
+        image.write(fat)
+        image.seek((first_fat_sector + len(fat) // SECTOR_SIZE) * SECTOR_SIZE)
+        image.write(fat)
 
 
 def main() -> None:

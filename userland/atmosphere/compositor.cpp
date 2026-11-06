@@ -5,6 +5,18 @@
 #include <stdint.h>
 #include <stddef.h>
 
+/* Minimal C++ runtime support for freestanding compilation */
+extern "C" void *__dso_handle;
+extern "C" int __cxa_atexit(void (*func)(void *), void *arg, void *dso) {
+    (void)func;
+    (void)arg;
+    (void)dso;
+    return 0;
+}
+extern "C" void __stack_chk_fail(void) {
+    for (;;) { __asm__ volatile ("hlt"); }
+}
+
 static inline uint64_t user_syscall2(uint64_t number, uint64_t a0,
                                      uint64_t a1) {
     uint64_t result;

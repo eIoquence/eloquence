@@ -1112,6 +1112,11 @@ enum fat32_result fat32_read_directory_file(
 
     remaining = entry->size;
     cluster = entry->first_cluster;
+    serial_write("FAT32 read_dir: starting cluster=");
+    serial_write_decimal(cluster);
+    serial_write(" size=");
+    serial_write_decimal(entry->size);
+    serial_write("\n");
     for (uint32_t chain_step = 0; chain_step < volume->cluster_count;
          chain_step++) {
         for (uint32_t sector = 0;
@@ -1119,7 +1124,7 @@ enum fat32_result fat32_read_directory_file(
              sector++) {
             uint64_t lba;
             if (!cluster_sector_lba(volume, cluster, sector, &lba)) {
-                serial_write("FAT32 list_dir: cluster_sector_lba failed cluster=");
+                serial_write("FAT32 read_dir: cluster_sector_lba failed cluster=");
                 serial_write_decimal(cluster);
                 serial_write(" sector=");
                 serial_write_decimal(sector);

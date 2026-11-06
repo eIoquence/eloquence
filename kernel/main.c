@@ -1531,18 +1531,35 @@ uint64_t kernel_system_process_spawn(uint64_t packed_name,
 
     serial_write("kernel_system_process_spawn: parent_id=");
     serial_write_decimal(parent_id);
-    serial_write("\n");
-    serial_write("kernel_system_process_spawn: scheduler_active=");
+    serial_write(" scheduler_active=");
     serial_write_decimal(kernel_scheduler_is_active());
     serial_write("\n");
 
-    if (!kernel_scheduler_is_active()
-        || !kernel_process_is_running(parent_id)
-        || !decode_short_name(packed_name, packed_extension, short_name)
-        || !read_fat32_file(0, 1, short_name, &image_size)
-        || !x86_user_elf_spawn(fat32_file_buffer, image_size, parent_id,
+    if (!kernel_scheduler_is_active()) {
+        serial_write("kernel_system_process_spawn: scheduler not active\n");
+        return 0;
+    }
+    if (!kernel_process_is_running(parent_id)) {
+        serial_write("kernel_system_process_spawn: parent not running\n");
+        return 0;
+    }
+    if (!decode_short_name(packed_name, packed_extension, short_name)) {
+        serial_write("kernel_system_process_spawn: decode_short_name failed\n");
+        return 0;
+    }
+    serial_write("kernel_system_process_spawn: name=");
+    serial_write(short_name);
+    serial_write("\n");
+    if (!read_fat32_file(0, 1, short_name, &image_size)) {
+        serial_write("kernel_system_process_spawn: read_fat32_file failed\n");
+        return 0;
+    }
+    serial_write("kernel_system_process_spawn: image_size=");
+    serial_write_decimal(image_size);
+    serial_write("\n");
+    if (!x86_user_elf_spawn(fat32_file_buffer, image_size, parent_id,
                                &process_id)) {
-        serial_write("kernel_system_process_spawn: failed\n");
+        serial_write("kernel_system_process_spawn: x86_user_elf_spawn failed\n");
         return 0;
     }
     return process_id;
