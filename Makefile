@@ -3,6 +3,7 @@ SHELL := /bin/sh
 .DELETE_ON_ERROR:
 
 TARGET_CC ?= clang
+TARGET_CXX ?= clang++
 TARGET_LD ?= ld.lld
 HOST_CC ?= cc
 QEMU ?= qemu-system-x86_64
@@ -61,6 +62,13 @@ MIPS32_CFLAGS ?= --target=mipsel-unknown-elf -std=gnu11 -O2 \
 USER_CFLAGS ?= --target=x86_64-unknown-none-elf -std=gnu11 -Os \
 	-Wall -Wextra -Werror -ffreestanding -fno-builtin \
 	-fno-stack-protector -fno-stack-check -fno-pic -fno-pie \
+	-fno-unwind-tables -fno-asynchronous-unwind-tables \
+	-ffunction-sections -fdata-sections -MMD -MP -m64 -march=x86-64 \
+	-mno-mmx -mno-sse -mno-red-zone -mcmodel=small -nostdinc \
+	-isystem $(CLANG_RESOURCE_DIR)/include -Iinclude
+USER_CXXFLAGS ?= --target=x86_64-unknown-none-elf -std=gnu++11 -Os \
+	-Wall -Wextra -Werror -ffreestanding -fno-builtin \
+	-fno-stack-protector -fno-pic -fno-pie \
 	-fno-unwind-tables -fno-asynchronous-unwind-tables \
 	-ffunction-sections -fdata-sections -MMD -MP -m64 -march=x86-64 \
 	-mno-mmx -mno-sse -mno-red-zone -mcmodel=small -nostdinc \
@@ -192,7 +200,14 @@ build/userland/ipc_demo.o: userland/ipc_demo.c include/eloquence/syscall_abi.h
 build/userland/ipc_demo.elf: build/userland/ipc_demo.o userland/user.ld
 	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
 
-userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf
+build/userland/atmosphere/%.o: userland/atmosphere/%.cpp include/eloquence/syscall_abi.h
+	mkdir -p $(@D)
+	$(TARGET_CXX) $(USER_CXXFLAGS) -fno-exceptions -fno-rtti -fno-threadsafe-statics -c $< -o $@
+
+build/userland/atmosphere/compositor.elf: build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o userland/user.ld
+	$(TARGET_LD) $(USER_LDFLAGS) -o $@ build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o
+
+userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_LD) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)
@@ -212,10 +227,11 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf
+qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf
 	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
 		--shell build/userland/shell.elf \
-		--demo build/userland/ipc_demo.elf --force
+		--demo build/userland/ipc_demo.elf \
+		--atmosphere build/userland/atmosphere/compositor.elf --force
 
 run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \

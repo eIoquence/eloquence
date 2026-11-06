@@ -3,6 +3,7 @@
 #include <stdint.h>
 
 #include "block_device.h"
+#include "arch/x86_64/serial.h"
 
 #define BLOCK_DEVICE_CAPACITY 16
 
@@ -99,9 +100,21 @@ static bool validate_request(const struct block_device *device, uint64_t lba,
 bool block_device_read(uint64_t index, uint64_t lba, uint32_t count,
                        void *buffer) {
     const struct block_device *device = block_device_get(index);
-
-    return validate_request(device, lba, count, buffer)
-        && device->read(device->context, lba, count, buffer);
+    serial_write("block_device_read: index=");
+    serial_write_decimal(index);
+    serial_write(" lba=");
+    serial_write_decimal(lba);
+    serial_write(" count=");
+    serial_write_decimal(count);
+    serial_write("\n");
+    if (!device) {
+        return false;
+    }
+    bool result = device->read(device->context, lba, count, buffer);
+    serial_write("block_device_read: result=");
+    serial_write_decimal(result ? 1 : 0);
+    serial_write("\n");
+    return result;
 }
 
 bool block_device_write(uint64_t index, uint64_t lba, uint32_t count,

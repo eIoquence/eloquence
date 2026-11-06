@@ -692,6 +692,9 @@ static bool read_fat32_file(uint64_t device_index,
         || !mount_fat32(device_index, partition_number, &volume)) {
         return false;
     }
+    serial_write("FAT32 read: ");
+    serial_write(short_name);
+    serial_write("\n");
     enum fat32_result result = fat32_read_root_file(
         &volume, short_name, fat32_file_buffer, sizeof(fat32_file_buffer),
         bytes_read);
@@ -1526,12 +1529,20 @@ uint64_t kernel_system_process_spawn(uint64_t packed_name,
     uint64_t process_id = 0;
     uint64_t parent_id = kernel_domain_current_id();
 
+    serial_write("kernel_system_process_spawn: parent_id=");
+    serial_write_decimal(parent_id);
+    serial_write("\n");
+    serial_write("kernel_system_process_spawn: scheduler_active=");
+    serial_write_decimal(kernel_scheduler_is_active());
+    serial_write("\n");
+
     if (!kernel_scheduler_is_active()
         || !kernel_process_is_running(parent_id)
         || !decode_short_name(packed_name, packed_extension, short_name)
         || !read_fat32_file(0, 1, short_name, &image_size)
         || !x86_user_elf_spawn(fat32_file_buffer, image_size, parent_id,
                                &process_id)) {
+        serial_write("kernel_system_process_spawn: failed\n");
         return 0;
     }
     return process_id;

@@ -4,6 +4,7 @@
 
 #include "block_device.h"
 #include "fat32.h"
+#include "arch/x86_64/serial.h"
 
 #define FAT32_MIN_SECTOR_SIZE 512U
 #define FAT32_MAX_SECTOR_SIZE 4096U
@@ -888,6 +889,9 @@ static enum fat32_result list_directory(
             }
             if (!block_device_read(volume->device_index, lba, 1,
                                    sector_buffer)) {
+                serial_write("FAT32 read: block_device_read failed lba=");
+                serial_write_decimal(lba);
+                serial_write("\n");
                 return FAT32_IO_ERROR;
             }
             for (uint32_t offset = 0; offset < volume->sector_size;
@@ -1014,6 +1018,11 @@ enum fat32_result fat32_parent_directory(
 enum fat32_result fat32_read_root_file(
     const struct fat32_volume *volume, const char *short_name,
     void *buffer, uint32_t capacity, uint32_t *bytes_read) {
+    serial_write("FAT32 read_root: name=");
+    serial_write(short_name);
+    serial_write(" root_cluster=");
+    serial_write_decimal(volume != 0 ? volume->root_cluster : 999999);
+    serial_write("\n");
     return fat32_read_directory_file(volume, volume != 0
         ? volume->root_cluster : 0, short_name, buffer, capacity, bytes_read);
 }
@@ -1023,31 +1032,63 @@ enum fat32_result fat32_read_directory_file(
     const char *short_name, void *buffer, uint32_t capacity,
     uint32_t *bytes_read) {
     uint32_t entry_count = 0;
-    uint32_t remaining;
+    uint32_t remaining = UINT32_MAX;
     uint32_t cluster;
     uint8_t *destination = buffer;
     struct fat32_directory_entry *entry = 0;
+
+    serial_write("FAT32 read_dir: dev=");
+    serial_write_decimal(volume->device_index);
+    serial_write(" sec_size=");
+    serial_write_decimal(volume->sector_size);
+    serial_write(" spc=");
+    serial_write_decimal(volume->sectors_per_cluster);
+    serial_write(" cluster_count=");
+    serial_write_decimal(volume->cluster_count);
+    serial_write(" root_cluster=");
+    serial_write_decimal(volume->root_cluster);
+    serial_write(" dir_cluster=");
+    serial_write_decimal(directory_cluster);
+    serial_write(" name=");
+    serial_write(short_name);
+    serial_write("\n");
 
     if (!valid_volume(volume) || directory_cluster < 2
         || directory_cluster >= volume->cluster_count + 2U
         || short_name == 0 || buffer == 0
         || bytes_read == 0) {
+        serial_write("FAT32 read_dir: INVALID volume or params\n");
         return FAT32_INVALID;
     }
     *bytes_read = 0;
     enum fat32_result result = list_directory(
         volume, directory_cluster, root_entry_scratch,
         FAT32_MAX_DIRECTORY_ENTRIES, &entry_count);
+    serial_write("FAT32 list_dir: entry_count=");
+    serial_write_decimal(entry_count);
+    serial_write(" result=");
+    serial_write_decimal(result);
+    serial_write("\n");
     if (result != FAT32_OK) {
         return result;
     }
     for (uint32_t i = 0; i < entry_count; i++) {
         if (short_name_equals(root_entry_scratch[i].short_name, short_name)) {
             entry = &root_entry_scratch[i];
+            serial_write("FAT32 read_dir: found entry: ");
+            serial_write(root_entry_scratch[i].short_name);
+            serial_write(" cluster=");
+            serial_write_decimal(root_entry_scratch[i].first_cluster);
+            serial_write(" size=");
+            serial_write_decimal(root_entry_scratch[i].size);
+            serial_write("\n");
             break;
         }
     }
     if (entry == 0) {
+        serial_write("FAT32 read_dir: entry not found for ");
+        serial_write(short_name);
+        serial_write("\n");
         return FAT32_NOT_FOUND;
     }
     if ((entry->attributes & FAT32_ATTRIBUTE_DIRECTORY) != 0) {
@@ -1061,6 +1102,11 @@ enum fat32_result fat32_read_directory_file(
     }
     if (entry->first_cluster < 2
         || entry->first_cluster >= volume->cluster_count + 2U) {
+        serial_write("FAT32 read_dir: invalid first_cluster=");
+        serial_write_decimal(entry->first_cluster);
+        serial_write(" cluster_count=");
+        serial_write_decimal(volume->cluster_count);
+        serial_write("\n");
         return FAT32_INVALID;
     }
 
@@ -1069,14 +1115,22 @@ enum fat32_result fat32_read_directory_file(
     for (uint32_t chain_step = 0; chain_step < volume->cluster_count;
          chain_step++) {
         for (uint32_t sector = 0;
-             sector < volume->sectors_per_cluster && remaining != 0;
+             sector < volume->sectors_per_cluster;
              sector++) {
             uint64_t lba;
             if (!cluster_sector_lba(volume, cluster, sector, &lba)) {
+                serial_write("FAT32 list_dir: cluster_sector_lba failed cluster=");
+                serial_write_decimal(cluster);
+                serial_write(" sector=");
+                serial_write_decimal(sector);
+                serial_write("\n");
                 return FAT32_INVALID;
             }
             if (!block_device_read(volume->device_index, lba, 1,
                                    sector_buffer)) {
+                serial_write("FAT32 list_dir: block_device_read failed lba=");
+                serial_write_decimal(lba);
+                serial_write("\n");
                 return FAT32_IO_ERROR;
             }
             uint32_t bytes = remaining < volume->sector_size
@@ -1094,6 +1148,15 @@ enum fat32_result fat32_read_directory_file(
         uint32_t next;
         bool end_of_chain;
         result = next_cluster(volume, cluster, &next, &end_of_chain);
+        serial_write("FAT32 read_dir: next_cluster(cluster=");
+        serial_write_decimal(cluster);
+        serial_write(") next=");
+        serial_write_decimal(next);
+        serial_write(" end=");
+        serial_write_decimal(end_of_chain ? 1 : 0);
+        serial_write(" result=");
+        serial_write_decimal(result);
+        serial_write("\n");
         if (result != FAT32_OK) {
             return result;
         }

@@ -211,7 +211,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list", "net-socket", "net-bind", "net-connect", "net-listen", "net-accept", "net-close", "net-send", "net-send-data", "net-send-commit", "net-recv", "net-recv-data", "ipc-shm-get", "ipc-shm-at", "ipc-sem-init", "ipc-sem-wait", "ipc-sem-post", "ipc-signal-send", "ipc-signal-recv", "ipc-mq-open", "ipc-mq-send", "ipc-mq-recv", "ipc-mq-close"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list", "net-socket", "net-bind", "net-connect", "net-listen", "net-accept", "net-close", "net-send", "net-send-data", "net-send-commit", "net-recv", "net-recv-data", "ipc-shm-get", "ipc-shm-at", "ipc-sem-init", "ipc-sem-wait", "ipc-sem-post", "ipc-signal-send", "ipc-signal-recv", "ipc-mq-open", "ipc-mq-send", "ipc-mq-recv", "ipc-mq-close", "atmosphere"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -1267,7 +1267,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, net-socket TYPE PROTO, net-bind FD IP PORT, net-connect FD IP PORT, net-listen FD, net-accept FD, net-close FD, net-send FD LEN, net-send-data OFFSET BYTE, net-send-commit FD, net-recv FD MAXLEN, net-recv-data OFFSET, ipc-shm-get NAME SIZE, ipc-shm-at ID, ipc-sem-init NAME VAL, ipc-sem-wait ID, ipc-sem-post ID, ipc-signal-send DOM SIG, ipc-signal-recv DOM, ipc-mq-open NAME, ipc-mq-send ID MSG, ipc-mq-recv ID, ipc-mq-close ID, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, net-socket TYPE PROTO, net-bind FD IP PORT, net-connect FD IP PORT, net-listen FD, net-accept FD, net-close FD, net-send FD LEN, net-send-data OFFSET BYTE, net-send-commit FD, net-recv FD MAXLEN, net-recv-data OFFSET, ipc-shm-get NAME SIZE, ipc-shm-at ID, ipc-sem-init NAME VAL, ipc-sem-wait ID, ipc-sem-post ID, ipc-signal-send DOM SIG, ipc-signal-recv DOM, ipc-mq-open NAME, ipc-mq-send ID MSG, ipc-mq-recv ID, ipc-mq-close ID, atmosphere, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -2550,6 +2550,25 @@ __attribute__((noreturn)) void _start(void) {
                 if (status != ELOQUENCE_SYSCALL_RESULT_OK)
                     write_string("ipc-mq-close: failed\n");
                 else write_string("ipc-mq-close: ok\n");
+            }
+        } else if (text_equals(line, "atmosphere")) {
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            if (!pack_filename("ATMOSPH.ELF", &packed_base,
+                               &packed_extension)) {
+                write_string("atmosphere: internal error\n");
+            } else {
+                uint64_t result = user_syscall(
+                    ELOQUENCE_SYSCALL_PROCESS_SPAWN, packed_base,
+                    packed_extension, 0);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("atmosphere: spawn failed\n");
+                } else {
+                    write_string("atmosphere: spawned process ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
             }
         } else if (command_is(line, "fw-add")) {
             char *cursor = line + 6;
