@@ -8,6 +8,8 @@
 #include "net/ipv4.h"
 #include "net/netif.h"
 #include "net/socket.h"
+#include "net/tcp.h"
+#include "ipc/ipc.h"
 #include "net/udp.h"
 #include "process/process.h"
 #include "process/scheduler.h"
@@ -365,6 +367,20 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             uint32_t sock = frame->rdi;
             uint32_t ip = frame->rsi;
             uint16_t port = (uint16_t)frame->rdx;
+            struct net_socket *s = net_socket_get(sock);
+            if (s == 0 || ip == 0 || port == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            if (s->protocol == 6U && s->type == NET_SOCK_STREAM) {
+                s->peer_ip = ip;
+                s->peer_port = port;
+                if (!tcp_send_syn(s)) {
+                    return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                       0);
+                }
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+            }
             if (!net_socket_connect(sock, ip, port)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                    0);
@@ -374,6 +390,19 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
         case ELOQUENCE_SYSCALL_NET_LISTEN: {
             uint32_t sock = frame->rdi;
             uint32_t backlog = frame->rsi;
+            struct net_socket *s = net_socket_get(sock);
+            if (s == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            if (s->protocol == 6U && s->type == NET_SOCK_STREAM) {
+                if (s->local_port == 0) {
+                    return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                       0);
+                }
+                s->tcp_state = TCP_STATE_LISTEN;
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+            }
             if (!net_socket_listen(sock, backlog)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                    0);
@@ -382,11 +411,27 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
         }
         case ELOQUENCE_SYSCALL_NET_ACCEPT: {
             uint32_t sock = frame->rdi;
-            uint32_t fd = net_socket_accept(sock);
-            if (fd == (uint32_t)-1) {
+            struct net_socket *ls = net_socket_get(sock);
+            if (ls == 0 || ls->protocol != 6U || ls->type != NET_SOCK_STREAM
+                || ls->tcp_state != TCP_STATE_LISTEN) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
             }
-            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, fd);
+            /* Find a socket in SYN_RECEIVED state on this listen port. */
+            for (uint32_t i = 0; i < net_socket_count(); i++) {
+                struct net_socket *c = net_socket_get(i);
+                if (c == 0 || c == ls || c->protocol != 6U
+                    || c->type != NET_SOCK_STREAM
+                    || c->tcp_state != TCP_STATE_SYN_RECEIVED
+                    || c->local_port != ls->local_port) {
+                    continue;
+                }
+                c->tcp_state = TCP_STATE_ESTABLISHED;
+                if (!tcp_send_ack(c)) {
+                    return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, i);
+                }
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, i);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
         }
         case ELOQUENCE_SYSCALL_NET_SEND_BEGIN: {
             uint32_t sock = frame->rdi;
@@ -429,6 +474,9 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             if (s != 0 && s->protocol == 17U) {
                 ok = udp_output(s->peer_ip, s->peer_port, s->local_port,
                                 net_send_buffer, net_send_length);
+            } else if (s != 0 && s->protocol == 6U
+                       && s->type == NET_SOCK_STREAM) {
+                ok = tcp_send_data(s, net_send_buffer, net_send_length);
             }
             net_send_length = 0;
             net_send_sock = 0;
@@ -481,6 +529,154 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
         case ELOQUENCE_SYSCALL_NET_CLOSE: {
             uint32_t sock = frame->rdi;
             if (!net_socket_close(sock)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SHM_GET: {
+            char name[IPC_MAX_NAME];
+            uint64_t packed = frame->rdi;
+            for (uint32_t i = 0; i < 8 && packed != 0; i++) {
+                name[i] = (char)(packed & 0xffU);
+                packed >>= 8;
+            }
+            name[7] = '\0';
+            uint32_t size = (uint32_t)frame->rsi;
+            uint64_t id = ipc_shm_get(name, size);
+            if (id == IPC_SHM_INVALID) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, id);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SHM_AT: {
+            uint64_t id = frame->rdi;
+            void *addr = ipc_shmat(id);
+            if (addr == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint64_t)(uintptr_t)addr);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SHM_DT: {
+            void *addr = (void *)(uintptr_t)frame->rdi;
+            if (!ipc_shmdt(addr)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SHM_CTL: {
+            uint64_t id = frame->rdi;
+            uint32_t cmd = (uint32_t)frame->rsi;
+            if (!ipc_shmctl(id, cmd)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SEM_INIT: {
+            char name[IPC_MAX_NAME];
+            uint64_t packed = frame->rdi;
+            for (uint32_t i = 0; i < 8 && packed != 0; i++) {
+                name[i] = (char)(packed & 0xffU);
+                packed >>= 8;
+            }
+            name[7] = '\0';
+            int32_t value = (int32_t)frame->rsi;
+            uint64_t id = ipc_sem_init(name, value);
+            if (id == IPC_SHM_INVALID) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, id);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SEM_WAIT: {
+            uint64_t id = frame->rdi;
+            if (!ipc_sem_wait(id)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SEM_POST: {
+            uint64_t id = frame->rdi;
+            if (!ipc_sem_post(id)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SEM_DESTROY: {
+            uint64_t id = frame->rdi;
+            if (!ipc_sem_destroy(id)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SIGNAL_SEND: {
+            uint64_t target = frame->rdi;
+            uint8_t sig = (uint8_t)frame->rsi;
+            if (!ipc_signal_send(target, sig)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_SIGNAL_RECV: {
+            uint64_t source = frame->rdi;
+            uint8_t sig = ipc_signal_recv(&source);
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, sig);
+        }
+        case ELOQUENCE_SYSCALL_IPC_MQ_OPEN: {
+            char name[IPC_MAX_NAME];
+            uint64_t packed = frame->rdi;
+            for (uint32_t i = 0; i < 8 && packed != 0; i++) {
+                name[i] = (char)(packed & 0xffU);
+                packed >>= 8;
+            }
+            name[7] = '\0';
+            uint64_t id = ipc_mq_open(name);
+            if (id == IPC_SHM_INVALID) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, id);
+        }
+        case ELOQUENCE_SYSCALL_IPC_MQ_SEND: {
+            uint64_t id = frame->rdi;
+            uint64_t packed_msg = frame->rsi;
+            uint32_t len = (uint32_t)frame->rdx;
+            if (len > IPC_MAX_MSG_SIZE) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            uint8_t msg[IPC_MAX_MSG_SIZE];
+            for (uint32_t i = 0; i < len; i++) {
+                msg[i] = (uint8_t)(packed_msg & 0xffU);
+                packed_msg >>= 8;
+            }
+            if (!ipc_mq_send(id, msg, len)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_IPC_MQ_RECV: {
+            uint64_t id = frame->rdi;
+            void *buffer = (void *)(uintptr_t)frame->rsi;
+            uint32_t max_len = (uint32_t)frame->rdx;
+            uint32_t out_len = 0;
+            if (!ipc_mq_recv(id, buffer, max_len, &out_len)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, out_len);
+        }
+        case ELOQUENCE_SYSCALL_IPC_MQ_CLOSE: {
+            uint64_t id = frame->rdi;
+            if (!ipc_mq_close(id)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                    0);
             }

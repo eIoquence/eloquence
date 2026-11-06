@@ -161,17 +161,21 @@ bool ramfs_vfs_write_file(void *context, uint32_t directory, const char *name,
 
 bool ramfs_vfs_create_directory(void *context, uint32_t parent,
                                 const char *name) {
-    (void)context;
     (void)parent;
-    (void)name;
-    return false;
+    return ramfs_vfs_create_file(context, parent, name);
 }
 
-bool ramfs_vfs_find_directory(void *context, uint32_t parent, const char *name,
-                              uint32_t *directory) {
-    (void)context;
+bool ramfs_vfs_find_directory(void *context, uint32_t parent,
+                              const char *name, uint32_t *directory) {
     (void)parent;
-    (void)name;
-    (void)directory;
-    return false;
+    struct ramfs_state *state = context;
+    if (state == 0 || name == 0 || directory == 0) {
+        return false;
+    }
+    int32_t index = ramfs_find_name(state, name);
+    if (index < 0) {
+        return false;
+    }
+    *directory = (uint32_t)index;
+    return true;
 }

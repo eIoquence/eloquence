@@ -19,6 +19,8 @@
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
 #include "net/socket.h"
+#include "net/tcp.h"
+#include "ipc/ipc.h"
 #include "process/process.h"
 #include "process/scheduler.h"
 #include "paging.h"
@@ -1931,6 +1933,8 @@ void kmain(void) {
     }
     net_socket_init();
     serial_write("Network socket layer initialized.\n");
+    ipc_init();
+    serial_write("IPC subsystem initialized.\n");
     __asm__ volatile ("sti" : : : "memory");
     if (block_device_count() != 0) {
         serial_write("Starting user shell from disk 0, GPT partition 1.\n");

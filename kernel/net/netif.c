@@ -5,6 +5,7 @@
 static struct netif netif;
 
 static bool (*transmit_hook)(const uint8_t *frame, uint32_t length) = 0;
+static void (*poll_hook)(void) = 0;
 
 bool netif_transmit(const uint8_t *frame, uint32_t length) {
     if (!netif.link_up || frame == 0 || length == 0
@@ -102,4 +103,18 @@ bool netif_register_driver(bool (*transmit)(const uint8_t *frame,
     }
     transmit_hook = transmit;
     return true;
+}
+
+bool netif_register_poll(void (*poll)(void)) {
+    if (poll == 0 || poll_hook != 0) {
+        return false;
+    }
+    poll_hook = poll;
+    return true;
+}
+
+void netif_poll_all(void) {
+    if (poll_hook != 0) {
+        poll_hook();
+    }
 }

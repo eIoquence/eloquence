@@ -27,7 +27,7 @@ struct net_socket {
     bool in_use;
     uint32_t protocol;      /* 0 = any, 1 = ICMP, 6 = TCP, 17 = UDP */
     uint16_t type;          /* NET_SOCK_STREAM / NET_SOCK_DGRAM */
-    uint16_t state;
+    uint16_t state;         /* VFS-level: CLOSED / LISTEN / etc */
     uint32_t local_ip;
     uint16_t local_port;
     uint32_t peer_ip;
@@ -40,6 +40,10 @@ struct net_socket {
     uint8_t tx_buffer[NET_MAX_PACKET];
     uint32_t tx_length;
     bool tx_pending;
+    /* TCP-specific state (only when protocol == 6 and type == STREAM). */
+    uint8_t tcp_state;
+    uint32_t tcp_seq;
+    uint32_t tcp_ack;
 };
 
 bool net_socket_init(void);

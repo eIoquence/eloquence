@@ -9,6 +9,8 @@
 #include "user/elf_loader.h"
 #include "arch/x86_64/timer.h"
 
+#include "net/netif.h"
+
 struct scheduler_task {
     uint64_t process_id;
     uint64_t address_space;
@@ -126,6 +128,7 @@ uint64_t *kernel_scheduler_on_timer(uint64_t *context) {
     if (!scheduler_active || context == 0 || (context[16] & 3U) != 3U) {
         return context;
     }
+    netif_poll_all();
     uint64_t process_id = kernel_domain_current_id();
     int32_t index = find_task(process_id);
     if (index < 0) {

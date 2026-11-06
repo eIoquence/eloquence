@@ -52,4 +52,10 @@ void netif_get_addresses(uint8_t mac[6], uint32_t *ipv4);
 bool netif_register_driver(bool (*transmit)(const uint8_t *frame,
                                             uint32_t length));
 
+/* Register a poll callback (called from the timer IRQ to drain RX queues). */
+bool netif_register_poll(void (*poll)(void));
+
+/* Poll all registered network drivers. Called from the timer interrupt. */
+void netif_poll_all(void);
+
 #endif

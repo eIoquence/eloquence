@@ -17,6 +17,8 @@
 #define NET_MAX_PACKET 1514U
 #define NET_SOCK_STREAM 1U
 #define NET_SOCK_DGRAM 2U
+/* Constante IPC (mirorează kernel/ipc/ipc.h). */
+#define IPC_MAX_MSG_SIZE 256U
 static char shell_alias_names[SHELL_ALIAS_CAPACITY][16];
 static char shell_alias_values[SHELL_ALIAS_CAPACITY][64];
 static size_t shell_alias_count = 0;
@@ -209,7 +211,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list", "net-socket", "net-bind", "net-connect", "net-listen", "net-accept", "net-close", "net-send", "net-send-data", "net-send-commit", "net-recv", "net-recv-data"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list", "net-socket", "net-bind", "net-connect", "net-listen", "net-accept", "net-close", "net-send", "net-send-data", "net-send-commit", "net-recv", "net-recv-data", "ipc-shm-get", "ipc-shm-at", "ipc-sem-init", "ipc-sem-wait", "ipc-sem-post", "ipc-signal-send", "ipc-signal-recv", "ipc-mq-open", "ipc-mq-send", "ipc-mq-recv", "ipc-mq-close"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -353,6 +355,12 @@ static void write_hex_byte(uint8_t value) {
     static const char digits[] = "0123456789abcdef";
     write_char(digits[value >> 4]);
     write_char(digits[value & 0x0fU]);
+}
+
+static void write_hex32(uint32_t value) {
+    for (int32_t i = 28; i >= 0; i -= 4) {
+        write_hex_byte((uint8_t)(value >> i));
+    }
 }
 
 static void cap_print_bits(uint32_t bits) {
@@ -1259,7 +1267,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, net-socket TYPE PROTO, net-bind FD IP PORT, net-connect FD IP PORT, net-listen FD, net-accept FD, net-close FD, net-send FD LEN, net-send-data OFFSET BYTE, net-send-commit FD, net-recv FD MAXLEN, net-recv-data OFFSET, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, net-socket TYPE PROTO, net-bind FD IP PORT, net-connect FD IP PORT, net-listen FD, net-accept FD, net-close FD, net-send FD LEN, net-send-data OFFSET BYTE, net-send-commit FD, net-recv FD MAXLEN, net-recv-data OFFSET, ipc-shm-get NAME SIZE, ipc-shm-at ID, ipc-sem-init NAME VAL, ipc-sem-wait ID, ipc-sem-post ID, ipc-signal-send DOM SIG, ipc-signal-recv DOM, ipc-mq-open NAME, ipc-mq-send ID MSG, ipc-mq-recv ID, ipc-mq-close ID, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -2264,6 +2272,284 @@ __attribute__((noreturn)) void _start(void) {
                     }
                     write_char('\n');
                 }
+            }
+        } else if (command_is(line, "ipc-shm-get")) {
+            char *cursor = line + 12;
+            char name_text[8];
+            char size_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(name_text)) name_text[ti++] = *cursor++;
+            name_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(size_text)) size_text[ti++] = *cursor++;
+            size_text[ti] = '\0';
+            uint64_t packed = 0;
+            for (uint32_t i = 0; i < 7 && name_text[i] != '\0'; i++) {
+                packed |= (uint64_t)(uint8_t)name_text[i] << (i * 8);
+            }
+            uint64_t size = 0;
+            parse_number(size_text, &size);
+            if (size == 0 || size > 4096U) {
+                write_string("Usage: ipc-shm-get NAME SIZE (1-4096)\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SHM_GET,
+                                               packed, size, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-shm-get: failed\n");
+                else {
+                    write_string("ipc-shm-get: id ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "ipc-shm-at")) {
+            char *cursor = line + 10;
+            char id_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            uint64_t id = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-shm-at ID\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SHM_AT,
+                                               id, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-shm-at: failed\n");
+                else {
+                    write_string("ipc-shm-at: addr 0x");
+                    write_hex32((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "ipc-sem-init")) {
+            char *cursor = line + 12;
+            char name_text[8];
+            char val_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(name_text)) name_text[ti++] = *cursor++;
+            name_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(val_text)) val_text[ti++] = *cursor++;
+            val_text[ti] = '\0';
+            uint64_t packed = 0;
+            for (uint32_t i = 0; i < 7 && name_text[i] != '\0'; i++) {
+                packed |= (uint64_t)(uint8_t)name_text[i] << (i * 8);
+            }
+            uint64_t value = 0;
+            if (!parse_number(val_text, &value)) {
+                write_string("Usage: ipc-sem-init NAME VALUE\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SEM_INIT,
+                                               packed, value, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-sem-init: failed\n");
+                else {
+                    write_string("ipc-sem-init: id ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "ipc-sem-wait")) {
+            char *cursor = line + 12;
+            char id_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            uint64_t id = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-sem-wait ID\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SEM_WAIT,
+                                               id, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK)
+                    write_string("ipc-sem-wait: would block\n");
+                else if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-sem-wait: failed\n");
+                else write_string("ipc-sem-wait: ok\n");
+            }
+        } else if (command_is(line, "ipc-sem-post")) {
+            char *cursor = line + 12;
+            char id_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            uint64_t id = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-sem-post ID\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SEM_POST,
+                                               id, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-sem-post: failed\n");
+                else write_string("ipc-sem-post: ok\n");
+            }
+        } else if (command_is(line, "ipc-signal-send")) {
+            char *cursor = line + 16;
+            char dom_text[8], sig_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(dom_text)) dom_text[ti++] = *cursor++;
+            dom_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(sig_text)) sig_text[ti++] = *cursor++;
+            sig_text[ti] = '\0';
+            uint64_t dom = 0, sig = 0;
+            if (!parse_number(dom_text, &dom) || !parse_number(sig_text, &sig)) {
+                write_string("Usage: ipc-signal-send DOMAIN SIG\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SIGNAL_SEND,
+                                               dom, sig, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-signal-send: failed\n");
+                else write_string("ipc-signal-send: ok\n");
+            }
+        } else if (command_is(line, "ipc-signal-recv")) {
+            char *cursor = line + 16;
+            char dom_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(dom_text)) dom_text[ti++] = *cursor++;
+            dom_text[ti] = '\0';
+            uint64_t dom = 0;
+            if (!parse_number(dom_text, &dom)) {
+                write_string("Usage: ipc-signal-recv DOMAIN\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SIGNAL_RECV,
+                                               dom, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-signal-recv: failed\n");
+                else {
+                    write_string("ipc-signal-recv: signal ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "ipc-mq-open")) {
+            char *cursor = line + 11;
+            char name_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(name_text)) name_text[ti++] = *cursor++;
+            name_text[ti] = '\0';
+            uint64_t packed = 0;
+            for (uint32_t i = 0; i < 7 && name_text[i] != '\0'; i++) {
+                packed |= (uint64_t)(uint8_t)name_text[i] << (i * 8);
+            }
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_MQ_OPEN,
+                                           packed, 0, 0);
+            uint32_t status = (uint32_t)(result >> 32);
+            if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                write_string("ipc-mq-open: failed\n");
+            else {
+                write_string("ipc-mq-open: id ");
+                write_unsigned((uint32_t)result);
+                write_char('\n');
+            }
+        } else if (command_is(line, "ipc-mq-send")) {
+            char *cursor = line + 12;
+            char id_text[8], msg_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(msg_text)) msg_text[ti++] = *cursor++;
+            msg_text[ti] = '\0';
+            uint64_t id = 0, packed = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-mq-send ID MSG(up to 8 chars)\n");
+            } else {
+                for (uint32_t i = 0; i < 8 && msg_text[i] != '\0'; i++) {
+                    packed |= (uint64_t)(uint8_t)msg_text[i] << (i * 8);
+                }
+                uint32_t len = 0;
+                while (msg_text[len] != '\0') len++;
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_MQ_SEND,
+                                               id, packed, len);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-mq-send: failed\n");
+                else write_string("ipc-mq-send: ok\n");
+            }
+        } else if (command_is(line, "ipc-mq-recv")) {
+            char *cursor = line + 12;
+            char id_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            uint64_t id = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-mq-recv ID\n");
+            } else {
+                uint8_t buf[IPC_MAX_MSG_SIZE];
+                uint32_t out_len = 0;
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_MQ_RECV,
+                                               id, (uint64_t)(uintptr_t)buf,
+                                               IPC_MAX_MSG_SIZE);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK)
+                    write_string("ipc-mq-recv: would block\n");
+                else if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-mq-recv: failed\n");
+                else {
+                    out_len = (uint32_t)result;
+                    write_string("ipc-mq-recv: ");
+                    for (uint32_t i = 0; i < out_len; i++) {
+                        write_char((char)buf[i]);
+                    }
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "ipc-mq-close")) {
+            char *cursor = line + 13;
+            char id_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(id_text)) id_text[ti++] = *cursor++;
+            id_text[ti] = '\0';
+            uint64_t id = 0;
+            if (!parse_number(id_text, &id)) {
+                write_string("Usage: ipc-mq-close ID\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_MQ_CLOSE,
+                                               id, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("ipc-mq-close: failed\n");
+                else write_string("ipc-mq-close: ok\n");
             }
         } else if (command_is(line, "fw-add")) {
             char *cursor = line + 6;

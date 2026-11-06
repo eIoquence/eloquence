@@ -396,6 +396,7 @@ bool virtio_net_initialize(const struct pci_device_info *device) {
     netif_set_link_up(true);
     /* QEMU user networking: guest 10.0.2.15, gateway 10.0.2.2. */
     netif_set_addresses(net.mac, 0x0a00020fU);
+    netif_register_poll(virtio_net_poll);
     if (!netif_register_driver(transmit_frame)) {
         return false;
     }
