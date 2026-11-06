@@ -4,6 +4,7 @@
 #include "firewall.h"
 #include "ipv4.h"
 #include "netif.h"
+#include "udp.h"
 
 #define IPV4_BROADCAST 0xffffffffU
 
@@ -126,6 +127,9 @@ bool ipv4_input(const uint8_t eth_src[ETH_ADDR_LEN],
             }
             return netif_transmit(frame, ETH_HEADER_LEN + total_length);
         }
+    }
+    if (protocol == IPV4_PROTOCOL_UDP) {
+        return udp_input(eth_src, payload, length);
     }
     return true;
 }

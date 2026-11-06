@@ -12,6 +12,11 @@
 #define SHELL_VERSION "Eloquence shell 0.1.0 (x86_64)"
 #define SHELL_ENV_CAPACITY 8U
 #define SHELL_ALIAS_CAPACITY 8U
+
+/* Constante rețea (mirorează kernel/net/netif.h și socket.h). */
+#define NET_MAX_PACKET 1514U
+#define NET_SOCK_STREAM 1U
+#define NET_SOCK_DGRAM 2U
 static char shell_alias_names[SHELL_ALIAS_CAPACITY][16];
 static char shell_alias_values[SHELL_ALIAS_CAPACITY][64];
 static size_t shell_alias_count = 0;
@@ -204,7 +209,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping", "fw-add", "fw-rm", "fw-list", "net-socket", "net-bind", "net-connect", "net-listen", "net-accept", "net-close", "net-send", "net-send-data", "net-send-commit", "net-recv", "net-recv-data"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -1254,7 +1259,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, fw-add SRC DST PROTO ACTION, fw-rm INDEX, fw-list, net-socket TYPE PROTO, net-bind FD IP PORT, net-connect FD IP PORT, net-listen FD, net-accept FD, net-close FD, net-send FD LEN, net-send-data OFFSET BYTE, net-send-commit FD, net-recv FD MAXLEN, net-recv-data OFFSET, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1973,6 +1978,291 @@ __attribute__((noreturn)) void _start(void) {
                     write_string("fw: rule removed\n");
                 } else {
                     write_string("fw: no such rule\n");
+                }
+            }
+        } else if (command_is(line, "net-socket")) {
+            char *cursor = line + 10;
+            char type_text[8];
+            char proto_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(type_text)) type_text[ti++] = *cursor++;
+            type_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(proto_text)) proto_text[ti++] = *cursor++;
+            proto_text[ti] = '\0';
+            uint32_t type = type_text[0] == 's' ? NET_SOCK_STREAM
+                          : type_text[0] == 'd' ? NET_SOCK_DGRAM : 0xffffffffU;
+            uint32_t proto = proto_text[0] == 't' ? 6U
+                      : proto_text[0] == 'u' ? 17U
+                      : proto_text[0] == 'i' ? 1U : 0U;
+            if (type == 0xffffffffU || proto == 0U) {
+                write_string("Usage: net-socket stream|dgram tcp|udp|icmp|any\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_SOCKET,
+                                               2U, type, proto);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("net-socket: failed\n");
+                } else {
+                    write_string("net-socket: fd ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "net-bind")) {
+            char *cursor = line + 8;
+            char fd_text[8], ip_text[16], port_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(ip_text)) ip_text[ti++] = *cursor++;
+            ip_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(port_text)) port_text[ti++] = *cursor++;
+            port_text[ti] = '\0';
+            uint64_t fd = 0; uint32_t ip = 0; uint64_t port = 0;
+            if (!parse_number(fd_text, &fd) || !parse_ipv4(ip_text, &ip)
+                || !parse_number(port_text, &port) || port > 65535U) {
+                write_string("Usage: net-bind FD IP PORT\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_BIND,
+                                               fd, ip, port);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-bind: failed\n");
+                else write_string("net-bind: ok\n");
+            }
+        } else if (command_is(line, "net-connect")) {
+            char *cursor = line + 12;
+            char fd_text[8], ip_text[16], port_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(ip_text)) ip_text[ti++] = *cursor++;
+            ip_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(port_text)) port_text[ti++] = *cursor++;
+            port_text[ti] = '\0';
+            uint64_t fd = 0; uint32_t ip = 0; uint64_t port = 0;
+            if (!parse_number(fd_text, &fd) || !parse_ipv4(ip_text, &ip)
+                || !parse_number(port_text, &port) || port > 65535U) {
+                write_string("Usage: net-connect FD IP PORT\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_CONNECT,
+                                               fd, ip, port);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-connect: failed\n");
+                else write_string("net-connect: ok\n");
+            }
+        } else if (command_is(line, "net-listen")) {
+            char *cursor = line + 10;
+            char fd_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            uint64_t fd = 0;
+            if (!parse_number(fd_text, &fd)) {
+                write_string("Usage: net-listen FD\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_LISTEN,
+                                               fd, 4U, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-listen: failed\n");
+                else write_string("net-listen: ok\n");
+            }
+        } else if (command_is(line, "net-accept")) {
+            char *cursor = line + 10;
+            char fd_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            uint64_t fd = 0;
+            if (!parse_number(fd_text, &fd)) {
+                write_string("Usage: net-accept FD\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_ACCEPT,
+                                               fd, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK)
+                    write_string("net-accept: would block\n");
+                else if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-accept: failed\n");
+                else {
+                    write_string("net-accept: fd ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "net-close")) {
+            char *cursor = line + 9;
+            char fd_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            uint64_t fd = 0;
+            if (!parse_number(fd_text, &fd)) {
+                write_string("Usage: net-close FD\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_CLOSE,
+                                               fd, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-close: failed\n");
+                else write_string("net-close: ok\n");
+            }
+        } else if (command_is(line, "net-send")) {
+            char *cursor = line + 8;
+            char fd_text[8], len_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(len_text)) len_text[ti++] = *cursor++;
+            len_text[ti] = '\0';
+            uint64_t fd = 0, length = 0;
+            if (!parse_number(fd_text, &fd) || !parse_number(len_text, &length)
+                || length == 0 || length > NET_MAX_PACKET) {
+                write_string("Usage: net-send FD LEN (then net-send-data / net-send-commit)\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_SEND_BEGIN,
+                                               fd, length, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-send: begin failed\n");
+                else write_string("net-send: begin ok, use net-send-data\n");
+            }
+        } else if (command_is(line, "net-send-data")) {
+            char *cursor = line + 14;
+            char off_text[8], val_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(off_text)) off_text[ti++] = *cursor++;
+            off_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(val_text)) val_text[ti++] = *cursor++;
+            val_text[ti] = '\0';
+            uint64_t off = 0, val = 0;
+            if (!parse_number(off_text, &off) || !parse_number(val_text, &val)
+                || val > 255U) {
+                write_string("Usage: net-send-data OFFSET BYTE(0-255)\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_SEND_DATA,
+                                               off, val, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-send-data: failed\n");
+            }
+        } else if (command_is(line, "net-send-commit")) {
+            char *cursor = line + 16;
+            char fd_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            uint64_t fd = 0;
+            if (!parse_number(fd_text, &fd)) {
+                write_string("Usage: net-send-commit FD\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_SEND_COMMIT,
+                                               fd, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-send-commit: failed\n");
+                else write_string("net-send-commit: sent\n");
+            }
+        } else if (command_is(line, "net-recv")) {
+            char *cursor = line + 9;
+            char fd_text[8], max_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(fd_text)) fd_text[ti++] = *cursor++;
+            fd_text[ti] = '\0';
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            ti = 0;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(max_text)) max_text[ti++] = *cursor++;
+            max_text[ti] = '\0';
+            uint64_t fd = 0, maxlen = 0;
+            if (!parse_number(fd_text, &fd) || !parse_number(max_text, &maxlen)
+                || maxlen == 0) {
+                write_string("Usage: net-recv FD MAXLEN\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_RECV,
+                                               fd, maxlen, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK)
+                    write_string("net-recv: would block\n");
+                else if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-recv: failed\n");
+                else {
+                    write_string("net-recv: ");
+                    write_unsigned((uint32_t)result);
+                    write_string(" bytes, use net-recv-data to read\n");
+                }
+            }
+        } else if (command_is(line, "net-recv-data")) {
+            char *cursor = line + 15;
+            char off_text[8];
+            uint32_t ti = 0;
+            while (*cursor == ' ' || *cursor == '\t') cursor++;
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ti + 1 < sizeof(off_text)) off_text[ti++] = *cursor++;
+            off_text[ti] = '\0';
+            uint64_t off = 0;
+            if (!parse_number(off_text, &off)) {
+                write_string("Usage: net-recv-data OFFSET\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_READ_BUFFER,
+                                               off, 3U, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_END_OF_FILE)
+                    write_string("net-recv-data: end\n");
+                else if (status != ELOQUENCE_SYSCALL_RESULT_OK)
+                    write_string("net-recv-data: failed\n");
+                else {
+                    uint32_t data = (uint32_t)result;
+                    uint32_t count = data >> 30;
+                    data &= 0x3fffffffU;
+                    for (uint32_t i = 0; i < count; i++) {
+                        write_unsigned((data >> (i * 8)) & 0xffU);
+                        write_char(' ');
+                    }
+                    write_char('\n');
                 }
             }
         } else if (command_is(line, "fw-add")) {

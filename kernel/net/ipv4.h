@@ -10,6 +10,7 @@
 
 #define IPV4_HEADER_LEN 20U
 #define IPV4_PROTOCOL_ICMP 1U
+#define IPV4_PROTOCOL_UDP 17U
 
 /* Process a received IPv4 frame (Ethernet payload). Handles ICMP echo
  * requests by sending an echo reply. Returns true if the frame was IPv4 and

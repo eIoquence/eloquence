@@ -7,6 +7,8 @@
 #include "net/firewall.h"
 #include "net/ipv4.h"
 #include "net/netif.h"
+#include "net/socket.h"
+#include "net/udp.h"
 #include "process/process.h"
 #include "process/scheduler.h"
 #include "serial.h"
@@ -37,6 +39,10 @@ static uint64_t pack_result(uint32_t result,
 /* Network receive staging buffer for the register-bound syscall interface. */
 static uint8_t net_receive_buffer[NET_MAX_PACKET];
 static uint32_t net_receive_length = 0;
+/* Network send staging buffer (mirrors FS_WRITE staging). */
+static uint8_t net_send_buffer[NET_MAX_PACKET];
+static uint32_t net_send_length = 0;
+static uint32_t net_send_sock = 0;
 
 uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
     if (frame == 0 || kernel_domain_current_id() == KERNEL_DOMAIN_ID) {
@@ -274,25 +280,6 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             }
             return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
         }
-        case ELOQUENCE_SYSCALL_NET_READ_BUFFER: {
-            uint64_t offset = frame->rdi;
-            uint64_t count = frame->rsi;
-            if (net_receive_length == 0 || offset >= net_receive_length) {
-                return pack_result(ELOQUENCE_SYSCALL_RESULT_END_OF_FILE, 0);
-            }
-            uint32_t remaining = net_receive_length - (uint32_t)offset;
-            uint32_t copy = count < remaining ? (uint32_t)count : remaining;
-            if (copy > 3U) {
-                copy = 3U;
-            }
-            uint32_t data = 0;
-            for (uint32_t i = 0; i < copy; i++) {
-                data |= (uint32_t)net_receive_buffer[(uint32_t)offset + i]
-                    << (i * 8);
-            }
-            data |= copy << 30;
-            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, data);
-        }
         case ELOQUENCE_SYSCALL_NET_PING: {
             uint32_t destination_ip = (uint32_t)frame->rdi;
             if (destination_ip == 0 || !netif_get_link_up()) {
@@ -354,6 +341,150 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             net_receive_length = pos;
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
                                firewall_rule_count());
+        }
+        case ELOQUENCE_SYSCALL_NET_SOCKET: {
+            uint32_t fd = net_socket_alloc(frame->rdi, frame->rsi,
+                                           frame->rdx);
+            if (fd == (uint32_t)-1) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, fd);
+        }
+        case ELOQUENCE_SYSCALL_NET_BIND: {
+            uint32_t sock = frame->rdi;
+            uint32_t ip = frame->rsi;
+            uint16_t port = (uint16_t)frame->rdx;
+            if (!net_socket_bind(sock, ip, port)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_NET_CONNECT: {
+            uint32_t sock = frame->rdi;
+            uint32_t ip = frame->rsi;
+            uint16_t port = (uint16_t)frame->rdx;
+            if (!net_socket_connect(sock, ip, port)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_NET_LISTEN: {
+            uint32_t sock = frame->rdi;
+            uint32_t backlog = frame->rsi;
+            if (!net_socket_listen(sock, backlog)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_NET_ACCEPT: {
+            uint32_t sock = frame->rdi;
+            uint32_t fd = net_socket_accept(sock);
+            if (fd == (uint32_t)-1) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, fd);
+        }
+        case ELOQUENCE_SYSCALL_NET_SEND_BEGIN: {
+            uint32_t sock = frame->rdi;
+            uint32_t length = frame->rsi;
+            if (sock >= NET_MAX_SOCKETS || !net_socket_get(sock)
+                || length == 0 || length > NET_MAX_PACKET
+                || net_send_length != 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            net_send_sock = sock;
+            net_send_length = length;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_NET_SEND_DATA: {
+            uint64_t offset = frame->rdi;
+            uint64_t packed = frame->rsi;
+            if (net_send_length == 0 || offset >= net_send_length) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            uint32_t remaining = net_send_length - (uint32_t)offset;
+            uint32_t copy = remaining < 4U ? remaining : 4U;
+            for (uint32_t i = 0; i < copy; i++) {
+                net_send_buffer[(uint32_t)offset + i]
+                    = (uint8_t)(packed >> (i * 8));
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, copy);
+        }
+        case ELOQUENCE_SYSCALL_NET_SEND_COMMIT: {
+            uint32_t sock = frame->rdi;
+            if (net_send_length == 0 || sock != net_send_sock) {
+                net_send_length = 0;
+                net_send_sock = 0;
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            struct net_socket *s = net_socket_get(sock);
+            bool ok = false;
+            if (s != 0 && s->protocol == 17U) {
+                ok = udp_output(s->peer_ip, s->peer_port, s->local_port,
+                                net_send_buffer, net_send_length);
+            }
+            net_send_length = 0;
+            net_send_sock = 0;
+            return pack_result(ok ? ELOQUENCE_SYSCALL_RESULT_OK
+                                  : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        }
+        case ELOQUENCE_SYSCALL_NET_RECV: {
+            uint32_t sock = frame->rdi;
+            uint32_t maxlen = frame->rsi;
+            if (sock >= NET_MAX_SOCKETS || !net_socket_get(sock)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            struct net_socket *s = net_socket_get(sock);
+            if (!s->rx_ready) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            uint32_t copy = s->rx_length;
+            if (copy > maxlen) {
+                copy = maxlen;
+            }
+            for (uint32_t i = 0; i < copy; i++) {
+                net_receive_buffer[i] = s->rx_buffer[i];
+            }
+            net_receive_length = copy;
+            s->rx_ready = false;
+            s->rx_length = 0;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, copy);
+        }
+        case ELOQUENCE_SYSCALL_NET_READ_BUFFER: {
+            uint64_t offset = frame->rdi;
+            uint64_t count = frame->rsi;
+            if (net_receive_length == 0 || offset >= net_receive_length) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_END_OF_FILE, 0);
+            }
+            uint32_t remaining = net_receive_length - (uint32_t)offset;
+            uint32_t copy = count < remaining ? (uint32_t)count : remaining;
+            if (copy > 3U) {
+                copy = 3U;
+            }
+            uint32_t data = 0;
+            for (uint32_t i = 0; i < copy; i++) {
+                data |= (uint32_t)net_receive_buffer[(uint32_t)offset + i]
+                    << (i * 8);
+            }
+            data |= copy << 30;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, data);
+        }
+        case ELOQUENCE_SYSCALL_NET_CLOSE: {
+            uint32_t sock = frame->rdi;
+            if (!net_socket_close(sock)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
             if (!kernel_domain_has(kernel_domain_current_id(),
