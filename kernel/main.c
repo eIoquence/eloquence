@@ -15,6 +15,7 @@
 #include "drivers/pci/edu.h"
 #include "drivers/virtio/virtio_blk.h"
 #include "drivers/virtio/virtio_net.h"
+#include "drivers/video/fb.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
@@ -1935,6 +1936,8 @@ void kmain(void) {
     serial_write("Network socket layer initialized.\n");
     ipc_init();
     serial_write("IPC subsystem initialized.\n");
+    fb_init();
+    serial_write("Framebuffer initialized.\n");
     __asm__ volatile ("sti" : : : "memory");
     if (block_device_count() != 0) {
         serial_write("Starting user shell from disk 0, GPT partition 1.\n");

@@ -11,6 +11,7 @@
 #include "net/tcp.h"
 #include "ipc/ipc.h"
 #include "net/udp.h"
+#include "drivers/video/fb.h"
 #include "process/process.h"
 #include "process/scheduler.h"
 #include "serial.h"
@@ -681,6 +682,69 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    0);
             }
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_INFO: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            /* rsi = pointer la struct framebuffer_info în userspace.
+             * Scriem câmpurile importante. */
+            volatile struct framebuffer_info *dst =
+                (volatile struct framebuffer_info *)(uintptr_t)frame->rsi;
+            dst->address = info->address;
+            dst->width = info->width;
+            dst->height = info->height;
+            dst->pitch = info->pitch;
+            dst->bpp = info->bpp;
+            dst->framebuffer_size = info->framebuffer_size;
+            dst->rgb = info->rgb;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_DRAW_PIXEL: {
+            uint64_t x = frame->rdi;
+            uint64_t y = frame->rsi;
+            uint32_t color = (uint32_t)frame->rdx;
+            if (!fb_put_pixel(x, y, color)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_FILL_RECT: {
+            uint64_t x = frame->rdi;
+            uint64_t y = frame->rsi;
+            uint64_t w = frame->rdx;
+            uint64_t h = frame->r10;
+            uint32_t color = (uint32_t)frame->r8;
+            if (!fb_fill_rect(x, y, w, h, color)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_CLEAR: {
+            uint32_t color = (uint32_t)frame->rdi;
+            if (!fb_clear(color)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_FLIP: {
+            if (!fb_flip()) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_INPUT_GET: {
+            /* Nu există încă driver de tastatură/mouse. */
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+        }
+        case ELOQUENCE_SYSCALL_INPUT_POLL: {
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
             if (!kernel_domain_has(kernel_domain_current_id(),
