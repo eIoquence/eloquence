@@ -1120,7 +1120,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1473,6 +1473,18 @@ __attribute__((noreturn)) void _start(void) {
             write_string("Architecture: x86-64\n");
             write_string("Kernel: experimental exokernel\n");
             write_string("Subsystems: shell, VFS, process, memory, drivers\n");
+        } else if (text_equals(line, "eos-info")) {
+            write_string(SHELL_VERSION "\n");
+            system_report(ELOQUENCE_SYSTEM_REPORT_SYSINFO);
+            system_report(ELOQUENCE_SYSTEM_REPORT_MEMINFO);
+        } else if (text_equals(line, "eos-process")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_PROCESS_LIST, 0, 0, 0);
+        } else if (text_equals(line, "eos-fs")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_LIST_CWD, 0, 0, 0);
+        } else if (text_equals(line, "eos-diagnostics")) {
+            system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
+            system_report(ELOQUENCE_SYSTEM_REPORT_DEVINFO);
+            system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {
