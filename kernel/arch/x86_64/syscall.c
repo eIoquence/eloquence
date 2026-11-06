@@ -187,24 +187,59 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
                                (uint32_t)process.exit_status);
         }
+        case ELOQUENCE_SYSCALL_CAP_QUERY:
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               kernel_domain_caps(kernel_domain_current_id()));
+        case ELOQUENCE_SYSCALL_CAP_GRANT: {
+            uint64_t current = kernel_domain_current_id();
+            if (!kernel_domain_has(current, KERNEL_CAP_ADMIN_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            (void)kernel_domain_grant(current, (uint32_t)frame->rsi);
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_CAP_REVOKE: {
+            uint64_t current = kernel_domain_current_id();
+            if (!kernel_domain_has(current, KERNEL_CAP_ADMIN_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            (void)kernel_domain_revoke(current, (uint32_t)frame->rsi);
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_ipc_create(frame->rdi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_IPC_SEND:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_ipc_send(frame->rdi, frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK,
                                0);
         case ELOQUENCE_SYSCALL_IPC_RECEIVE: {
             uint8_t byte = 0;
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             if (kernel_ipc_receive(frame->rdi, &byte)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, byte);
             }
             return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
         }
         case ELOQUENCE_SYSCALL_SYSTEM_CONTROL:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_SYSTEM_CONTROL_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             if (frame->rdi == 1) {
                 __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFE), "Nd"((uint16_t)0x64));
             } else {

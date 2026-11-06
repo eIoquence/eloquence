@@ -203,7 +203,8 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "sysinfo", "meminfo", "cpuinfo", "devinfo", "irqinfo",
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
-        "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history"
+        "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
+        "caps", "cap-add", "cap-drop"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -257,6 +258,44 @@ static char *skip_spaces(char *text) {
         text++;
     }
     return text;
+}
+
+static uint32_t cap_bits_from_name(const char *name) {
+    if (text_equals(name, "system")) {
+        return 0x01U;
+    }
+    if (text_equals(name, "admin")) {
+        return 0x02U;
+    }
+    if (text_equals(name, "mmio")) {
+        return 0x04U;
+    }
+    if (text_equals(name, "fs")) {
+        return 0x08U;
+    }
+    if (text_equals(name, "ipc")) {
+        return 0x10U;
+    }
+    return 0U;
+}
+
+static void cap_print_bits(uint32_t bits) {
+    static const char *const names[] = { "system", "admin", "mmio", "fs", "ipc" };
+    static const uint32_t masks[] = { 0x01U, 0x02U, 0x04U, 0x08U, 0x10U };
+    bool first = true;
+    for (size_t i = 0; i < 5; i++) {
+        if ((bits & masks[i]) != 0) {
+            if (!first) {
+                write_char(' ');
+            }
+            write_string(names[i]);
+            first = false;
+        }
+    }
+    if (first) {
+        write_string("(none)");
+    }
+    write_char('\n');
 }
 
 static void append_text(char *buffer, size_t capacity, size_t *length,
@@ -529,9 +568,17 @@ static void run_script_line(char *line,
     } else if (text_equals(command, "mmio")) {
         system_report(ELOQUENCE_SYSTEM_REPORT_MMIO);
     } else if (text_equals(command, "reboot")) {
-        (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
+        write_string("Rebooting...\n");
+        uint64_t result = user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
+        if ((uint32_t)(result >> 32) != 0) {
+            write_string("reboot: denied (missing cap system)\n");
+        }
     } else if (text_equals(command, "shutdown")) {
-        (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
+        write_string("Shutting down...\n");
+        uint64_t result = user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
+        if ((uint32_t)(result >> 32) != 0) {
+            write_string("shutdown: denied (missing cap system)\n");
+        }
     } else {
         write_string("script: unsupported command: ");
         write_string(command);
@@ -1136,7 +1183,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, ipc-open N, ipc-send N MSG, ipc-recv N, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, ipc-open N, ipc-send N MSG, ipc-recv N, caps, cap-add NAME, cap-drop NAME, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1395,10 +1442,18 @@ __attribute__((noreturn)) void _start(void) {
             }
         } else if (text_equals(line, "reboot")) {
             write_string("Rebooting...\n");
-            (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 1, 0, 0);
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL,
+                                           1, 0, 0);
+            if ((uint32_t)(result >> 32) != 0) {
+                write_string("reboot: denied (missing cap system)\n");
+            }
         } else if (text_equals(line, "shutdown")) {
             write_string("Shutting down...\n");
-            (void)user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL, 0, 0, 0);
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_SYSTEM_CONTROL,
+                                           0, 0, 0);
+            if ((uint32_t)(result >> 32) != 0) {
+                write_string("shutdown: denied (missing cap system)\n");
+            }
         } else if (text_equals(line, "env")) {
             for (size_t i = 0; i < shell_env_count; i++) {
                 write_string(shell_env_names[i]);
@@ -1560,6 +1615,37 @@ __attribute__((noreturn)) void _start(void) {
                     }
                     char one[2] = {(char)(uint8_t)result, '\0'};
                     write_string(one);
+                }
+            }
+        } else if (text_equals(line, "caps")) {
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_CAP_QUERY, 0, 0, 0);
+            if ((uint32_t)(result >> 32) != 0) {
+                write_string("caps: query failed\n");
+            } else {
+                cap_print_bits((uint32_t)result);
+            }
+        } else if (command_is(line, "cap-drop")) {
+            char *arg = skip_spaces(line + 8);
+            uint32_t bits = cap_bits_from_name(arg);
+            if (bits == 0U) {
+                write_string("Usage: cap-drop system|admin|mmio|fs|ipc\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_CAP_REVOKE,
+                                               0, bits, 0);
+                if ((uint32_t)(result >> 32) != 0) {
+                    write_string("cap-drop: denied (need admin)\n");
+                }
+            }
+        } else if (command_is(line, "cap-add")) {
+            char *arg = skip_spaces(line + 7);
+            uint32_t bits = cap_bits_from_name(arg);
+            if (bits == 0U) {
+                write_string("Usage: cap-add system|admin|mmio|fs|ipc\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_CAP_GRANT,
+                                               0, bits, 0);
+                if ((uint32_t)(result >> 32) != 0) {
+                    write_string("cap-add: denied (need admin)\n");
                 }
             }
         } else if (text_equals(line, "about")) {
