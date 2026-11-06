@@ -113,7 +113,7 @@ def make_spin_elf() -> bytes:
 
 
 def make_fat32_volume(
-    total_sectors: int, volume_start: int, shell_size: int
+    total_sectors: int, volume_start: int, shell_size: int, demo_size: int
 ) -> tuple[bytes, bytes, bytes, int]:
     fat_sectors = math.ceil(
         (total_sectors - FAT_RESERVED_SECTORS + 2)
@@ -125,6 +125,9 @@ def make_fat32_volume(
     shell_cluster_count = math.ceil(shell_size / SECTOR_SIZE)
     if shell_cluster_count == 0 or shell_cluster_count + 5 >= cluster_count:
         raise ValueError("invalid shell image size for FAT32 test volume")
+    demo_cluster_count = math.ceil(demo_size / SECTOR_SIZE)
+    if shell_cluster_count + demo_cluster_count + 5 >= cluster_count:
+        raise ValueError("invalid demo image size for FAT32 test volume")
 
     boot = bytearray(SECTOR_SIZE)
     boot[0:3] = b"\xeb\x58\x90"
@@ -171,18 +174,26 @@ def make_fat32_volume(
         cluster = 5 + index
         next_cluster = cluster + 1 if index + 1 < shell_cluster_count else 0x0FFFFFFF
         put_u32(fat, cluster * 4, next_cluster)
-    put_u32(fat, (5 + shell_cluster_count) * 4, 0x0FFFFFFF)
-    put_u32(fat, (6 + shell_cluster_count) * 4, 0x0FFFFFFF)
-    return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT)
+    demo_cluster_base = 5 + shell_cluster_count
+    for index in range(demo_cluster_count):
+        cluster = demo_cluster_base + index
+        next_cluster = cluster + 1 if index + 1 < demo_cluster_count else 0x0FFFFFFF
+        put_u32(fat, cluster * 4, next_cluster)
+    put_u32(fat, (demo_cluster_base + demo_cluster_count) * 4, 0x0FFFFFFF)
+    put_u32(fat, (demo_cluster_base + demo_cluster_count + 1) * 4, 0x0FFFFFFF)
+    return bytes(boot), bytes(fs_info), bytes(fat), len(HELLO_TEXT), demo_cluster_base
 
 
-def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> None:
+def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
+                 demo_elf: bytes) -> None:
     if size_mib < 64:
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
         raise FileExistsError(f"{path} exists; pass --force to replace it")
     if not shell_elf:
         raise ValueError("the shell ELF must not be empty")
+    if not demo_elf:
+        raise ValueError("the demo ELF must not be empty")
 
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     backup_header_lba = total_sectors - 1
@@ -210,8 +221,8 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         backup_header_lba, 1, first_usable_lba, last_usable_lba,
         backup_entries_lba, disk_guid, entries_crc,
     )
-    boot, fs_info, fat, contents_size = make_fat32_volume(
-        partition_sectors, PARTITION_START, len(shell_elf)
+    boot, fs_info, fat, contents_size, demo_cluster_base = make_fat32_volume(
+        partition_sectors, PARTITION_START, len(shell_elf), len(demo_elf)
     )
     hello_elf = make_hello_elf()
     spin_elf = make_spin_elf()
@@ -285,6 +296,11 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         put_u16(root, 148, 0)
         put_u16(root, 154, script_cluster)
         put_u32(root, 156, len(CONTROL_SCRIPT))
+        root[160:171] = b"IPCDMO  ELF"
+        root[171] = 0x20
+        put_u16(root, 180, 0)
+        put_u16(root, 186, demo_cluster_base)
+        put_u32(root, 188, len(demo_elf))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
@@ -298,6 +314,10 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes) -> No
         image.write(spin_elf)
         image.seek((data_start + script_cluster - 2) * SECTOR_SIZE)
         image.write(CONTROL_SCRIPT)
+        for index, offset in enumerate(range(0, len(demo_elf), SECTOR_SIZE)):
+            cluster = demo_cluster_base + index
+            image.seek((data_start + cluster - 2) * SECTOR_SIZE)
+            image.write(demo_elf[offset : offset + SECTOR_SIZE])
 
 
 def main() -> None:
@@ -305,9 +325,11 @@ def main() -> None:
     parser.add_argument("image", type=Path)
     parser.add_argument("--size-mib", type=int, default=64)
     parser.add_argument("--shell", type=Path, required=True)
+    parser.add_argument("--demo", type=Path, required=True)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
-    create_image(args.image, args.size_mib, args.force, args.shell.read_bytes())
+    create_image(args.image, args.size_mib, args.force, args.shell.read_bytes(),
+                 args.demo.read_bytes())
     print(f"Created {args.image} ({args.size_mib} MiB, GPT + FAT32)")
 
 

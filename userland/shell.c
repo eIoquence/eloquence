@@ -204,7 +204,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -1183,7 +1183,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1330,6 +1330,56 @@ __attribute__((noreturn)) void _start(void) {
                     write_string("Spawned process ");
                     write_unsigned((uint32_t)result);
                     write_char('\n');
+                }
+            }
+        } else if (text_equals(line, "ipc-demo")) {
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            if (!pack_filename("IPCDMO.ELF", &packed_base,
+                               &packed_extension)) {
+                write_string("ipc-demo: internal error\n");
+            } else {
+                uint64_t result = user_syscall(
+                    ELOQUENCE_SYSCALL_PROCESS_SPAWN, packed_base,
+                    packed_extension, 0);
+                if ((uint32_t)(result >> 32)
+                    != ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("ipc-demo: spawn failed\n");
+                } else {
+                    write_string("ipc-demo: spawned process ");
+                    write_unsigned((uint32_t)result);
+                    write_char('\n');
+                    result = user_syscall(ELOQUENCE_SYSCALL_IPC_CREATE, 0, 0,
+                                          0);
+                    if ((uint32_t)(result >> 32) != 0) {
+                        write_string("ipc-demo: open failed\n");
+                    } else {
+                        const char *message = "ipc-demo-ping\n";
+                        bool ok = true;
+                        for (size_t i = 0; message[i] != '\0'; i++) {
+                            result = user_syscall(
+                                ELOQUENCE_SYSCALL_IPC_SEND, 0,
+                                (uint64_t)(uint8_t)message[i], 0);
+                            if ((uint32_t)(result >> 32) != 0) {
+                                ok = false;
+                                break;
+                            }
+                        }
+                        if (!ok) {
+                            write_string("ipc-demo: send failed\n");
+                        } else {
+                            write_string("ipc-demo: echo: ");
+                            for (;;) {
+                                result = user_syscall(
+                                    ELOQUENCE_SYSCALL_IPC_RECEIVE, 0, 0, 0);
+                                if ((uint32_t)(result >> 32) != 0) {
+                                    break;
+                                }
+                                write_char((char)(uint8_t)result);
+                            }
+                            write_char('\n');
+                        }
+                    }
                 }
             }
         } else if (text_equals(line, "ls")) {

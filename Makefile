@@ -182,7 +182,14 @@ build/userland/shell.o: userland/shell.c include/eloquence/syscall_abi.h
 build/userland/shell.elf: build/userland/shell.o userland/user.ld
 	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
 
-userland-elf: build/userland/shell.elf
+build/userland/ipc_demo.o: userland/ipc_demo.c include/eloquence/syscall_abi.h
+	mkdir -p $(@D)
+	$(TARGET_CC) $(USER_CFLAGS) -c $< -o $@
+
+build/userland/ipc_demo.elf: build/userland/ipc_demo.o userland/user.ld
+	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
+
+userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_LD) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)
@@ -202,9 +209,10 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-qemu-disk: build/userland/shell.elf
+qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf
 	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
-		--shell build/userland/shell.elf --force
+		--shell build/userland/shell.elf \
+		--demo build/userland/ipc_demo.elf --force
 
 run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \

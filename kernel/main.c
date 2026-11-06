@@ -1513,8 +1513,7 @@ uint64_t kernel_system_process_spawn(uint64_t packed_name,
     uint64_t process_id = 0;
     uint64_t parent_id = kernel_domain_current_id();
 
-    if (parent_id == KERNEL_DOMAIN_ID
-        || !kernel_scheduler_is_active()
+    if (!kernel_scheduler_is_active()
         || !kernel_process_is_running(parent_id)
         || !decode_short_name(packed_name, packed_extension, short_name)
         || !read_fat32_file(0, 1, short_name, &image_size)
