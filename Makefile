@@ -84,6 +84,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/drivers/ata/ata_pio.o build/drivers/pci/edu.o \
 	build/drivers/virtio/virtio_blk.o build/drivers/virtio/virtio_net.o \
 	build/drivers/video/fb.o \
+	build/drivers/input/ps2.o build/drivers/input/input_queue.o \
 	build/net/netif.o build/net/ethernet.o build/net/arp.o build/net/ipv4.o build/net/firewall.o build/net/socket.o build/net/udp.o build/net/tcp.o build/ipc/ipc.o \
 	build/user/mmio_demo.o build/user/elf_loader.o
 AARCH64_OBJECTS := build/aarch64/arch/aarch64/main.o \

@@ -12,6 +12,8 @@
 #include "ipc/ipc.h"
 #include "net/udp.h"
 #include "drivers/video/fb.h"
+#include "drivers/input/ps2.h"
+#include "drivers/input/input_queue.h"
 #include "process/process.h"
 #include "process/scheduler.h"
 #include "serial.h"
@@ -740,11 +742,21 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         }
         case ELOQUENCE_SYSCALL_INPUT_GET: {
-            /* Nu există încă driver de tastatură/mouse. */
-            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            ps2_poll();
+            struct input_event ev;
+            if (!input_queue_pop(&ev)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               ((uint64_t)ev.type << 56) |
+                               ((uint64_t)ev.key_code << 48) |
+                               ((uint64_t)(uint32_t)ev.x << 32) |
+                               (uint32_t)ev.y);
         }
         case ELOQUENCE_SYSCALL_INPUT_POLL: {
-            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            ps2_poll();
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint64_t)input_queue_count());
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
             if (!kernel_domain_has(kernel_domain_current_id(),
