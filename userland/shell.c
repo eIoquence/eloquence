@@ -236,6 +236,22 @@ static bool text_equals(const char *left, const char *right) {
     return *left == '\0' && *right == '\0';
 }
 
+static bool parse_number(const char *text, uint64_t *value) {
+    uint64_t result = 0;
+    if (text == 0 || *text == '\0') {
+        return false;
+    }
+    for (; *text != '\0'; text++) {
+        if (*text < '0' || *text > '9'
+            || result > (UINT64_MAX - (uint64_t)(*text - '0')) / 10) {
+            return false;
+        }
+        result = result * 10 + (uint64_t)(*text - '0');
+    }
+    *value = result;
+    return true;
+}
+
 static char *skip_spaces(char *text) {
     while (*text == ' ' || *text == '\t') {
         text++;
@@ -1120,7 +1136,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, ipc-open N, ipc-send N MSG, ipc-recv N, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1485,6 +1501,67 @@ __attribute__((noreturn)) void _start(void) {
             system_report(ELOQUENCE_SYSTEM_REPORT_IRQINFO);
             system_report(ELOQUENCE_SYSTEM_REPORT_DEVINFO);
             system_report(ELOQUENCE_SYSTEM_REPORT_BOOTINFO);
+        } else if (command_is(line, "ipc-open")) {
+            char *arg = skip_spaces(line + 8);
+            uint64_t channel = 0;
+            if (!parse_number(arg, &channel) || channel > 3) {
+                write_string("Usage: ipc-open N (0-3)\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_CREATE,
+                                               channel, 0, 0);
+                if ((uint32_t)(result >> 32) != 0) {
+                    write_string("ipc: open failed\n");
+                }
+            }
+        } else if (command_is(line, "ipc-send")) {
+            char *arg = line + 8;
+            while (*arg == ' ' || *arg == '\t') arg++;
+            char channel_text[8];
+            size_t ci = 0;
+            while (*arg >= '0' && *arg <= '9' && ci + 1 < 8) {
+                channel_text[ci++] = *arg++;
+            }
+            channel_text[ci] = '\0';
+            while (*arg == ' ' || *arg == '\t') arg++;
+            uint64_t channel = 0;
+            if (!parse_number(channel_text, &channel) || channel > 3
+                || *arg == '\0') {
+                write_string("Usage: ipc-send N MSG (channel 0-3)\n");
+            } else {
+                bool ok = true;
+                for (size_t i = 0; arg[i] != '\0'; i++) {
+                    uint64_t result = user_syscall(ELOQUENCE_SYSCALL_IPC_SEND,
+                                                   channel,
+                                                   (uint64_t)(uint8_t)arg[i],
+                                                   0);
+                    if ((uint32_t)(result >> 32) != 0) {
+                        ok = false;
+                        break;
+                    }
+                }
+                (void)user_syscall(ELOQUENCE_SYSCALL_IPC_SEND,
+                                   channel, '\n', 0);
+                if (!ok) {
+                    write_string("ipc: channel full\n");
+                }
+            }
+        } else if (command_is(line, "ipc-recv")) {
+            char *arg = skip_spaces(line + 8);
+            uint64_t channel = 0;
+            if (!parse_number(arg, &channel) || channel > 3) {
+                write_string("Usage: ipc-recv N (0-3)\n");
+            } else {
+                for (;;) {
+                    uint64_t result = user_syscall(
+                        ELOQUENCE_SYSCALL_IPC_RECEIVE, channel, 0, 0);
+                    uint32_t status = (uint32_t)(result >> 32);
+                    if (status != 0) {
+                        break;
+                    }
+                    char one[2] = {(char)(uint8_t)result, '\0'};
+                    write_string(one);
+                }
+            }
         } else if (text_equals(line, "about")) {
             write_string("Ring-3 shell; serial input/output via syscalls.\n");
         } else if (text_equals(line, "exit")) {

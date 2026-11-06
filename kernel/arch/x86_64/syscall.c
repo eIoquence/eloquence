@@ -187,6 +187,23 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
                                (uint32_t)process.exit_status);
         }
+        case ELOQUENCE_SYSCALL_IPC_CREATE:
+            return pack_result(kernel_ipc_create(frame->rdi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        case ELOQUENCE_SYSCALL_IPC_SEND:
+            return pack_result(kernel_ipc_send(frame->rdi, frame->rsi)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK,
+                               0);
+        case ELOQUENCE_SYSCALL_IPC_RECEIVE: {
+            uint8_t byte = 0;
+            if (kernel_ipc_receive(frame->rdi, &byte)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, byte);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+        }
         case ELOQUENCE_SYSCALL_SYSTEM_CONTROL:
             if (frame->rdi == 1) {
                 __asm__ volatile ("outb %0, %1" : : "a"((uint8_t)0xFE), "Nd"((uint16_t)0x64));

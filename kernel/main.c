@@ -1078,6 +1078,48 @@ bool kernel_system_file_delete(uint64_t packed_name,
     return true;
 }
 
+#define KERNEL_IPC_CHANNEL_COUNT 4
+#define KERNEL_IPC_CHANNEL_CAPACITY 256
+static uint8_t kernel_ipc_buffers[KERNEL_IPC_CHANNEL_COUNT][KERNEL_IPC_CHANNEL_CAPACITY];
+static uint32_t kernel_ipc_head[KERNEL_IPC_CHANNEL_COUNT];
+static uint32_t kernel_ipc_tail[KERNEL_IPC_CHANNEL_COUNT];
+
+bool kernel_ipc_create(uint64_t channel) {
+    if (channel >= KERNEL_IPC_CHANNEL_COUNT) {
+        return false;
+    }
+    kernel_ipc_head[channel] = 0;
+    kernel_ipc_tail[channel] = 0;
+    return true;
+}
+
+bool kernel_ipc_send(uint64_t channel, uint64_t byte) {
+    if (channel >= KERNEL_IPC_CHANNEL_COUNT || byte > 0xffU) {
+        return false;
+    }
+    uint32_t next = (kernel_ipc_head[channel] + 1)
+                    % KERNEL_IPC_CHANNEL_CAPACITY;
+    if (next == kernel_ipc_tail[channel]) {
+        return false; /* full */
+    }
+    kernel_ipc_buffers[channel][kernel_ipc_head[channel]] = (uint8_t)byte;
+    kernel_ipc_head[channel] = next;
+    return true;
+}
+
+bool kernel_ipc_receive(uint64_t channel, uint8_t *byte) {
+    if (channel >= KERNEL_IPC_CHANNEL_COUNT || byte == 0) {
+        return false;
+    }
+    if (kernel_ipc_tail[channel] == kernel_ipc_head[channel]) {
+        return false; /* empty */
+    }
+    *byte = kernel_ipc_buffers[channel][kernel_ipc_tail[channel]];
+    kernel_ipc_tail[channel] = (kernel_ipc_tail[channel] + 1)
+                               % KERNEL_IPC_CHANNEL_CAPACITY;
+    return true;
+}
+
 bool kernel_system_file_copy_begin(uint64_t packed_name,
                                    uint64_t packed_extension,
                                    uint64_t mode) {
