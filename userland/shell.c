@@ -204,7 +204,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write", "ipc-demo", "net-stat", "net-recv", "net-ping"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -277,6 +277,51 @@ static uint32_t cap_bits_from_name(const char *name) {
         return 0x10U;
     }
     return 0U;
+}
+
+static bool parse_ipv4(const char *text, uint32_t *value) {
+    uint32_t result = 0;
+    uint32_t octets = 0;
+    uint32_t octet = 0;
+    bool in_octet = false;
+    if (text == 0 || *text == '\0') {
+        return false;
+    }
+    for (;;) {
+        char c = *text;
+        if (c >= '0' && c <= '9') {
+            octet = octet * 10 + (uint32_t)(c - '0');
+            if (octet > 255U) {
+                return false;
+            }
+            in_octet = true;
+        } else if (c == '.' || c == '\0') {
+            if (!in_octet || octets >= 4U) {
+                return false;
+            }
+            result |= octet << ((3U - octets) * 8U);
+            octets++;
+            octet = 0;
+            in_octet = false;
+            if (c == '\0') {
+                break;
+            }
+        } else {
+            return false;
+        }
+        text++;
+    }
+    if (octets != 4U) {
+        return false;
+    }
+    *value = result;
+    return true;
+}
+
+static void write_hex_byte(uint8_t value) {
+    static const char digits[] = "0123456789abcdef";
+    write_char(digits[value >> 4]);
+    write_char(digits[value & 0x0fU]);
 }
 
 static void cap_print_bits(uint32_t bits) {
@@ -1183,7 +1228,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, ipc-demo, net-stat, net-recv, net-ping A.B.C.D, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1769,6 +1814,71 @@ __attribute__((noreturn)) void _start(void) {
                                                0, bits, 0);
                 if ((uint32_t)(result >> 32) != 0) {
                     write_string("cap-add: denied (need admin)\n");
+                }
+            }
+        } else if (text_equals(line, "net-stat")) {
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_STATUS, 0,
+                                           0, 0);
+            uint32_t status = (uint32_t)(result >> 32);
+            if (status != ELOQUENCE_SYSCALL_RESULT_OK) {
+                write_string("net: link down\n");
+            } else {
+                uint32_t ipv4 = (uint32_t)result;
+                write_string("net: link up, ip ");
+                write_unsigned((ipv4 >> 24) & 0xffU);
+                write_char('.');
+                write_unsigned((ipv4 >> 16) & 0xffU);
+                write_char('.');
+                write_unsigned((ipv4 >> 8) & 0xffU);
+                write_char('.');
+                write_unsigned(ipv4 & 0xffU);
+                write_char('\n');
+            }
+        } else if (text_equals(line, "net-recv")) {
+            uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_RECEIVE, 0,
+                                           0, 0);
+            uint32_t status = (uint32_t)(result >> 32);
+            if (status != ELOQUENCE_SYSCALL_RESULT_OK) {
+                write_string("net: no packets\n");
+            } else {
+                uint32_t length = (uint32_t)result;
+                write_string("net: packet ");
+                write_unsigned(length);
+                write_string(" bytes:\n");
+                for (uint32_t offset = 0; offset < length; offset += 4U) {
+                    result = user_syscall(ELOQUENCE_SYSCALL_NET_READ_BUFFER,
+                                          offset, 4U, 0);
+                    if ((uint32_t)(result >> 32) != ELOQUENCE_SYSCALL_RESULT_OK) {
+                        break;
+                    }
+                    uint32_t data = (uint32_t)result;
+                    uint32_t count = data >> 30;
+                    data &= 0x3fffffffU;
+                    for (uint32_t i = 0; i < count; i++) {
+                        write_hex_byte((uint8_t)(data >> (i * 8)));
+                        write_char(' ');
+                    }
+                    write_char('\n');
+                }
+            }
+        } else if (command_is(line, "net-ping")) {
+            const char *text = line + 8;
+            while (*text == ' ' || *text == '\t') {
+                text++;
+            }
+            uint32_t ipv4 = 0;
+            if (!parse_ipv4(text, &ipv4)) {
+                write_string("Usage: net-ping A.B.C.D\n");
+            } else {
+                uint64_t result = user_syscall(ELOQUENCE_SYSCALL_NET_PING,
+                                               ipv4, 0, 0);
+                uint32_t status = (uint32_t)(result >> 32);
+                if (status == ELOQUENCE_SYSCALL_RESULT_OK) {
+                    write_string("net: ping sent\n");
+                } else if (status == ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK) {
+                    write_string("net: ping pending (resolving address)\n");
+                } else {
+                    write_string("net: ping failed\n");
                 }
             }
         } else if (text_equals(line, "about")) {

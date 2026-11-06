@@ -3,6 +3,9 @@
 
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"
+#include "drivers/virtio/virtio_net.h"
+#include "net/ipv4.h"
+#include "net/netif.h"
 #include "process/process.h"
 #include "process/scheduler.h"
 #include "serial.h"
@@ -29,6 +32,10 @@ static uint64_t pack_result(uint32_t result,
                             uint32_t value) {
     return ((uint64_t)result << 32) | value;
 }
+
+/* Network receive staging buffer for the register-bound syscall interface. */
+static uint8_t net_receive_buffer[NET_MAX_PACKET];
+static uint32_t net_receive_length = 0;
 
 uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
     if (frame == 0 || kernel_domain_current_id() == KERNEL_DOMAIN_ID) {
@@ -246,6 +253,56 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                     operation, frame->rsi, frame->rdx)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
+        }
+        case ELOQUENCE_SYSCALL_NET_STATUS: {
+            if (!netif_get_link_up()) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            uint32_t ipv4 = 0;
+            netif_get_addresses(0, &ipv4);
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, ipv4);
+        }
+        case ELOQUENCE_SYSCALL_NET_RECEIVE: {
+            virtio_net_poll();
+            uint32_t length = 0;
+            if (netif_receive_next(net_receive_buffer,
+                                   sizeof(net_receive_buffer), &length)) {
+                net_receive_length = length;
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, length);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+        }
+        case ELOQUENCE_SYSCALL_NET_READ_BUFFER: {
+            uint64_t offset = frame->rdi;
+            uint64_t count = frame->rsi;
+            if (net_receive_length == 0 || offset >= net_receive_length) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_END_OF_FILE, 0);
+            }
+            uint32_t remaining = net_receive_length - (uint32_t)offset;
+            uint32_t copy = count < remaining ? (uint32_t)count : remaining;
+            if (copy > 4U) {
+                copy = 4U;
+            }
+            uint32_t data = 0;
+            for (uint32_t i = 0; i < copy; i++) {
+                data |= (uint32_t)net_receive_buffer[(uint32_t)offset + i]
+                    << (i * 8);
+            }
+            data |= copy << 30;
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, data);
+        }
+        case ELOQUENCE_SYSCALL_NET_PING: {
+            uint32_t destination_ip = (uint32_t)frame->rdi;
+            if (destination_ip == 0 || !netif_get_link_up()) {
+                return pack_result(destination_ip == 0
+                                       ? ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT
+                                       : ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK,
+                                   0);
+            }
+            return pack_result(ipv4_send_icmp_echo(destination_ip)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK,
                                0);
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:

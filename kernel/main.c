@@ -14,6 +14,7 @@
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
 #include "drivers/virtio/virtio_blk.h"
+#include "drivers/virtio/virtio_net.h"
 #include "memory/mmio.h"
 #include "memory/page_allocator.h"
 #include "monitor/serial_shell.h"
@@ -421,6 +422,12 @@ static void report_pci_device(const struct pci_device_info *device,
         serial_write(virtio_blk_initialize(device)
                      ? "  VirtIO legacy block driver initialized\n"
                      : "  VirtIO legacy block driver probe failed\n");
+    }
+    if (device->vendor_id == 0x1af4 && (device->device_id == 0x1000
+                                        || device->device_id == 0x1004)) {
+        serial_write(virtio_net_initialize(device)
+                     ? "  VirtIO legacy network driver initialized\n"
+                     : "  VirtIO legacy network driver probe failed\n");
     }
 }
 
