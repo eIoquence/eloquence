@@ -204,7 +204,7 @@ static void complete_command(char *line, size_t *length, size_t capacity) {
         "bootinfo", "mmio", "ls", "cat", "stat", "touch", "rm", "mkdir", "pwd", "cd",
         "ps", "jobs", "wait", "kill", "exec", "spawn", "script",
         "about", "exit", "reboot", "shutdown", "env", "export", "alias", "unalias", "history",
-        "caps", "cap-add", "cap-drop"
+        "caps", "cap-add", "cap-drop", "mounts", "ram-ls", "ram-cat", "ram-touch", "ram-rm", "ram-write"
     };
     const char *match = 0;
     size_t matches = 0;
@@ -1183,7 +1183,7 @@ __attribute__((noreturn)) void _start(void) {
             continue;
         }
         if (text_equals(line, "help")) {
-            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, ipc-open N, ipc-send N MSG, ipc-recv N, caps, cap-add NAME, cap-drop NAME, about, exit; pipelines: echo|uname|version|grep|wc\n");
+            write_string("Commands: help, clear, echo, uname, uptime, version, reboot, shutdown, sysinfo, meminfo, cpuinfo, devinfo, irqinfo, bootinfo, mmio, ls, cat, stat, touch, rm, mkdir, pwd, cd, cp, mv, ps, jobs, wait PID, exec, spawn, kill, script FILE.TXT, env, export, alias, unalias, history, elo, eloquence, eos-info, eos-process, eos-fs, eos-diagnostics, caps, cap-add NAME, cap-drop NAME, mounts, ram-ls, ram-touch NAME, ram-rm NAME, ram-cat NAME, ram-write NAME TEXT, about, exit; pipelines: echo|uname|version|grep|wc\n");
         } else if (text_equals(line, "clear")) {
             (void)user_syscall(ELOQUENCE_SYSCALL_CONSOLE_CLEAR, 0, 0, 0);
         } else if (command_is(line, "echo")) {
@@ -1615,6 +1615,79 @@ __attribute__((noreturn)) void _start(void) {
                     }
                     char one[2] = {(char)(uint8_t)result, '\0'};
                     write_string(one);
+                }
+            }
+        } else if (text_equals(line, "ram-ls")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                               ELOQUENCE_RAM_OP_LIST, 0, 0);
+        } else if (text_equals(line, "mounts")) {
+            (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                               ELOQUENCE_RAM_OP_MOUNTS, 0, 0);
+        } else if (command_is(line, "ram-touch") || command_is(line, "ram-rm")) {
+            bool create = command_is(line, "ram-touch");
+            const char *filename = line + (create ? 9 : 6);
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string(create ? "Usage: ram-touch SHORTNAME.EXT\n"
+                                    : "Usage: ram-rm SHORTNAME.EXT\n");
+            } else {
+                (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                                   create ? ELOQUENCE_RAM_OP_TOUCH
+                                          : ELOQUENCE_RAM_OP_DELETE,
+                                   packed_base, packed_extension);
+            }
+        } else if (command_is(line, "ram-cat")) {
+            const char *filename = line + 7;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*filename == ' ' || *filename == '\t') {
+                filename++;
+            }
+            if (!pack_filename(filename, &packed_base, &packed_extension)) {
+                write_string("Usage: ram-cat SHORTNAME.EXT\n");
+            } else {
+                (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                                   ELOQUENCE_RAM_OP_CAT, packed_base,
+                                   packed_extension);
+            }
+        } else if (command_is(line, "ram-write")) {
+            const char *cursor = line + 9;
+            char namebuf[24];
+            size_t ni = 0;
+            uint64_t packed_base;
+            uint64_t packed_extension;
+            while (*cursor == ' ' || *cursor == '\t') {
+                cursor++;
+            }
+            while (*cursor != '\0' && *cursor != ' ' && *cursor != '\t'
+                   && ni + 1 < sizeof(namebuf)) {
+                namebuf[ni++] = *cursor++;
+            }
+            namebuf[ni] = '\0';
+            if (ni == 0 || !pack_filename(namebuf, &packed_base,
+                                          &packed_extension)) {
+                write_string("Usage: ram-write SHORTNAME.EXT TEXT\n");
+            } else {
+                while (*cursor == ' ' || *cursor == '\t') {
+                    cursor++;
+                }
+                if (*cursor == '\0') {
+                    write_string("Usage: ram-write SHORTNAME.EXT TEXT\n");
+                } else {
+                    (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                                       ELOQUENCE_RAM_OP_WRITE_BEGIN,
+                                       packed_base, packed_extension);
+                    while (*cursor != '\0') {
+                        (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                                           ELOQUENCE_RAM_OP_WRITE_CHAR,
+                                           (uint64_t)(uint8_t)*cursor++, 0);
+                    }
+                    (void)user_syscall(ELOQUENCE_SYSCALL_FS_RAM_CONTROL,
+                                       ELOQUENCE_RAM_OP_WRITE_COMMIT, 0, 0);
                 }
             }
         } else if (text_equals(line, "caps")) {

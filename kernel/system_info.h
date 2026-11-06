@@ -20,6 +20,8 @@ bool kernel_system_file_delete(uint64_t packed_name,
 bool kernel_ipc_create(uint64_t channel);
 bool kernel_ipc_send(uint64_t channel, uint64_t byte);
 bool kernel_ipc_receive(uint64_t channel, uint8_t *byte);
+bool kernel_system_ramfs_control(uint64_t operation, uint64_t argument0,
+                                 uint64_t argument1);
 
 bool kernel_system_file_copy_begin(uint64_t packed_name,
                                   uint64_t packed_extension,

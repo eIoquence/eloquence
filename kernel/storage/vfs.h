@@ -6,6 +6,8 @@
 
 #define VFS_NAME_CAPACITY 13U
 #define VFS_MAX_DIRECTORY_ENTRIES 128U
+#define VFS_MOUNT_PATH_MAX 16U
+#define VFS_MOUNT_COUNT_MAX 8U
 
 struct vfs_entry {
     char name[VFS_NAME_CAPACITY];
@@ -31,6 +33,10 @@ struct vfs_operations {
 };
 
 bool vfs_mount_root(const struct vfs_operations *operations, void *context);
+bool vfs_mount(const char *path, const struct vfs_operations *operations,
+               void *context);
+uint32_t vfs_mount_count(void);
+bool vfs_mount_path(uint32_t index, char *buffer, uint32_t capacity);
 bool vfs_root_mounted(void);
 bool vfs_list_root(struct vfs_entry *entries, uint32_t capacity,
                    uint32_t *entry_count);
@@ -51,5 +57,12 @@ bool vfs_create_file_in(uint32_t directory, const char *name);
 bool vfs_delete_file_in(uint32_t directory, const char *name);
 bool vfs_write_file_in(uint32_t directory, const char *name,
                        const void *buffer, uint32_t bytes);
+bool vfs_list_path(const char *path, struct vfs_entry *entries,
+                   uint32_t capacity, uint32_t *entry_count);
+bool vfs_read_path(const char *path, void *buffer, uint32_t capacity,
+                   uint32_t *bytes_read);
+bool vfs_write_path(const char *path, const void *buffer, uint32_t bytes);
+bool vfs_create_path(const char *path);
+bool vfs_delete_path(const char *path);
 
 #endif

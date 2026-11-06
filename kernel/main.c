@@ -9,6 +9,8 @@
 #include "exceptions.h"
 #include "capability/mmio_capability.h"
 #include "domain/domain.h"
+#include "storage/vfs.h"
+#include "storage/ramfs.h"
 #include "drivers/ata/ata_pio.h"
 #include "drivers/pci/edu.h"
 #include "drivers/virtio/virtio_blk.h"
@@ -1078,6 +1080,153 @@ bool kernel_system_file_delete(uint64_t packed_name,
     return true;
 }
 
+#define KERNEL_RAM_PATH_MAX 24
+
+static void ram_build_path(char *path, size_t capacity, const char *name) {
+    size_t index = 0;
+    static const char mount_prefix[] = "/ram/";
+    if (capacity < sizeof(mount_prefix)) {
+        return;
+    }
+    for (size_t i = 0; mount_prefix[i] != '\0'; i++) {
+        path[index++] = mount_prefix[i];
+    }
+    while (name[0] != '\0' && index + 1 < capacity) {
+        path[index++] = *name++;
+    }
+    path[index] = '\0';
+}
+
+static struct ramfs_state shell_ramfs_state;
+static bool ram_write_active;
+static char ram_write_path[KERNEL_RAM_PATH_MAX];
+static uint8_t ram_write_data[RAMFS_FILE_MAX];
+static uint32_t ram_write_size;
+
+static bool mount_ramfs(void) {
+    static const struct vfs_operations operations = {
+        .list_directory = ramfs_vfs_list_directory,
+        .read_file = ramfs_vfs_read_file,
+        .create_file = ramfs_vfs_create_file,
+        .delete_file = ramfs_vfs_delete_file,
+        .write_file = ramfs_vfs_write_file,
+        .create_directory = ramfs_vfs_create_directory,
+        .find_directory = ramfs_vfs_find_directory
+    };
+    return vfs_mount("/ram", &operations, &shell_ramfs_state);
+}
+
+static void ram_list(void) {
+    uint32_t entry_count = 0;
+    serial_write("RAM directory (/ram):\n");
+    if (!vfs_list_path("/ram", shell_vfs_entries, VFS_MAX_DIRECTORY_ENTRIES,
+                       &entry_count)) {
+        serial_write("ram: directory read failed\n");
+        return;
+    }
+    for (uint32_t i = 0; i < entry_count; i++) {
+        serial_write("  ");
+        serial_write(shell_vfs_entries[i].name);
+        serial_write("  ");
+        serial_write_decimal(shell_vfs_entries[i].size);
+        serial_write(" bytes\n");
+    }
+}
+
+static void ram_cat(const char *path) {
+    uint8_t buffer[RAMFS_FILE_MAX];
+    uint32_t bytes_read = 0;
+    if (!vfs_read_path(path, buffer, sizeof(buffer), &bytes_read)) {
+        serial_write("ram: file not found\n");
+        return;
+    }
+    for (uint32_t i = 0; i < bytes_read; i++) {
+        char value = (char)buffer[i];
+        if (value == '\r') {
+            continue;
+        }
+        if (value == '\n') {
+            serial_write("\n");
+        } else {
+            char text[2] = {value >= 32 && value <= 126 ? value : '?', '\0'};
+            serial_write(text);
+        }
+    }
+    if (bytes_read == 0 || buffer[bytes_read - 1] != '\n') {
+        serial_write("\n");
+    }
+}
+
+bool kernel_system_ramfs_control(uint64_t operation, uint64_t argument0,
+                                 uint64_t argument1) {
+    char name[FAT32_SHORT_NAME_LENGTH];
+    char path[KERNEL_RAM_PATH_MAX];
+    switch (operation) {
+    case ELOQUENCE_RAM_OP_LIST:
+        ram_list();
+        return true;
+    case ELOQUENCE_RAM_OP_MOUNTS: {
+        uint32_t count = vfs_mount_count();
+        char buffer[VFS_MOUNT_PATH_MAX];
+        serial_write("Mounted filesystems:\n");
+        serial_write("  / fat32 disk0:part1\n");
+        for (uint32_t i = 1; i < count; i++) {
+            if (vfs_mount_path(i, buffer, sizeof(buffer))) {
+                serial_write("  ");
+                serial_write(buffer);
+                serial_write(" ramfs\n");
+            }
+        }
+        return true;
+    }
+    case ELOQUENCE_RAM_OP_TOUCH:
+        if (!decode_short_name(argument0, argument1, name)
+            || name[0] == '\0') {
+            return false;
+        }
+        ram_build_path(path, sizeof(path), name);
+        return vfs_create_path(path);
+    case ELOQUENCE_RAM_OP_DELETE:
+        if (!decode_short_name(argument0, argument1, name)
+            || name[0] == '\0') {
+            return false;
+        }
+        ram_build_path(path, sizeof(path), name);
+        return vfs_delete_path(path);
+    case ELOQUENCE_RAM_OP_CAT:
+        if (!decode_short_name(argument0, argument1, name)
+            || name[0] == '\0') {
+            return false;
+        }
+        ram_build_path(path, sizeof(path), name);
+        ram_cat(path);
+        return true;
+    case ELOQUENCE_RAM_OP_WRITE_BEGIN:
+        if (!decode_short_name(argument0, argument1, name)
+            || name[0] == '\0') {
+            return false;
+        }
+        ram_write_active = true;
+        ram_write_size = 0;
+        ram_build_path(ram_write_path, sizeof(ram_write_path), name);
+        return true;
+    case ELOQUENCE_RAM_OP_WRITE_CHAR:
+        if (!ram_write_active || ram_write_size >= RAMFS_FILE_MAX) {
+            return false;
+        }
+        ram_write_data[ram_write_size++] = (uint8_t)argument0;
+        return true;
+    case ELOQUENCE_RAM_OP_WRITE_COMMIT:
+        if (!ram_write_active) {
+            return false;
+        }
+        ram_write_active = false;
+        return vfs_write_path(ram_write_path, ram_write_data, ram_write_size);
+    default:
+        return false;
+    }
+}
+
 #define KERNEL_IPC_CHANNEL_COUNT 4
 #define KERNEL_IPC_CHANNEL_CAPACITY 256
 static uint8_t kernel_ipc_buffers[KERNEL_IPC_CHANNEL_COUNT][KERNEL_IPC_CHANNEL_CAPACITY];
@@ -1770,6 +1919,9 @@ void kmain(void) {
         serial_write("Warning: local APIC setup failed; timer IRQ delivery may be unavailable\n");
     }
     serial_write("Boot information report complete.\n");
+    if (mount_ramfs()) {
+        serial_write("RAM filesystem mounted at /ram.\n");
+    }
     __asm__ volatile ("sti" : : : "memory");
     if (block_device_count() != 0) {
         serial_write("Starting user shell from disk 0, GPT partition 1.\n");

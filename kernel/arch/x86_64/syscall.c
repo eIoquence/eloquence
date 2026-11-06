@@ -96,33 +96,57 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_TOUCH:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_create(frame->rdi, frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_DELETE:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_delete(frame->rdi, frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_WRITE_BEGIN:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_write_begin(frame->rdi,
                                                                frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_WRITE_DATA:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_write_data(frame->rdi,
                                                               frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_WRITE_COMMIT:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_write_commit()
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_MKDIR:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_directory_create(frame->rdi,
                                                                frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK
@@ -205,6 +229,24 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             }
             (void)kernel_domain_revoke(current, (uint32_t)frame->rsi);
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
+        case ELOQUENCE_SYSCALL_FS_RAM_CONTROL: {
+            uint64_t operation = frame->rdi;
+            if (operation == ELOQUENCE_RAM_OP_TOUCH
+                || operation == ELOQUENCE_RAM_OP_DELETE
+                || operation == ELOQUENCE_RAM_OP_WRITE_BEGIN
+                || operation == ELOQUENCE_RAM_OP_WRITE_CHAR
+                || operation == ELOQUENCE_RAM_OP_WRITE_COMMIT) {
+                if (!kernel_domain_has(kernel_domain_current_id(),
+                                       KERNEL_CAP_FS_WRITE_BIT)) {
+                    return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+                }
+            }
+            return pack_result(kernel_system_ramfs_control(
+                                    operation, frame->rsi, frame->rdx)
+                                   ? ELOQUENCE_SYSCALL_RESULT_OK
+                                   : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                               0);
         }
         case ELOQUENCE_SYSCALL_IPC_CREATE:
             if (!kernel_domain_has(kernel_domain_current_id(),
