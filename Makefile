@@ -85,6 +85,7 @@ KERNEL_OBJECTS := build/main.o build/arch/x86_64/irq.o \
 	build/arch/x86_64/timer.o build/arch/x86_64/timer_irq.o \
 	build/capability/mmio_capability.o build/domain/domain.o \
 	build/process/process.o build/process/scheduler.o \
+	build/process/waitqueue.o \
 	build/lib/memory.o build/memory/page_allocator.o \
 	build/storage/block_device.o build/storage/gpt.o build/storage/fat32.o \
 	build/storage/vfs.o build/storage/ramfs.o \
@@ -207,7 +208,14 @@ build/userland/atmosphere/%.o: userland/atmosphere/%.cpp include/eloquence/sysca
 build/userland/atmosphere/compositor.elf: build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o userland/user.ld
 	$(TARGET_LD) $(USER_LDFLAGS) -o $@ build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o
 
-userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf
+build/userland/simple_test.o: userland/simple_test.c include/eloquence/syscall_abi.h
+	mkdir -p $(@D)
+	$(TARGET_CC) $(USER_CFLAGS) -c $< -o $@
+
+build/userland/simple_test.elf: build/userland/simple_test.o userland/user.ld
+	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
+
+userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf build/userland/simple_test.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_LD) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)
@@ -227,11 +235,12 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf
+qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf build/userland/simple_test.elf
 	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
 		--shell build/userland/shell.elf \
 		--demo build/userland/ipc_demo.elf \
-		--atmosphere build/userland/atmosphere/compositor.elf --force
+		--atmosphere build/userland/atmosphere/compositor.elf \
+		--simple-test build/userland/simple_test.elf --force
 
 run: build/eloquence.iso qemu-disk
 	$(QEMU) -machine q35 -m 512M -cdrom $< -boot d -display none \

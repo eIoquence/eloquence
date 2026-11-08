@@ -787,6 +787,72 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             }
             return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
         }
+        case ELOQUENCE_SYSCALL_IPC_PIPE_CREATE: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            char name[IPC_MAX_NAME];
+            uint64_t packed = frame->rdi;
+            for (uint32_t i = 0; i < 8 && packed != 0; i++) {
+                name[i] = (char)(packed & 0xffU);
+                packed >>= 8;
+            }
+            name[7] = '\0';
+            uint64_t id = ipc_pipe_create(name);
+            if (id == IPC_PIPE_INVALID) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, id);
+        }
+        case ELOQUENCE_SYSCALL_IPC_PIPE_WRITE: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            uint64_t id = frame->rdi;
+            uint64_t packed = frame->rsi;
+            uint32_t len = (uint32_t)frame->rdx;
+            uint8_t data[IPC_PIPE_BUFFER_SIZE];
+            uint32_t to_copy = len < 8U ? len : 8U;
+            for (uint32_t i = 0; i < to_copy; i++) {
+                data[i] = (uint8_t)(packed & 0xffU);
+                packed >>= 8;
+            }
+            uint32_t written = ipc_pipe_write(id, data, len);
+            if (written == 0U) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, written);
+        }
+        case ELOQUENCE_SYSCALL_IPC_PIPE_READ: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            uint64_t id = frame->rdi;
+            uint8_t *buffer = (uint8_t *)(uintptr_t)frame->rsi;
+            uint32_t max_len = (uint32_t)frame->rdx;
+            uint32_t out_len = 0;
+            if (!ipc_pipe_read(id, buffer, max_len, &out_len)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_WOULD_BLOCK, 0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, out_len);
+        }
+        case ELOQUENCE_SYSCALL_IPC_PIPE_CLOSE: {
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_IPC_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
+            uint64_t id = frame->rdi;
+            uint32_t end = (uint32_t)frame->rsi;
+            if (!ipc_pipe_close(id, end)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
         case ELOQUENCE_SYSCALL_SYSTEM_CONTROL:
             if (!kernel_domain_has(kernel_domain_current_id(),
                                    KERNEL_CAP_SYSTEM_CONTROL_BIT)) {

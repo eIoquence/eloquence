@@ -66,9 +66,9 @@ that can be claimed from an interface stub.
 | MIPS32 | Interrupt-state primitive and compile-only target | Separate Malta reset/firmware path, linker/entry code, UART diagnostics, exception and TLB contract |
 | FPGA | Research plan only; CVA6 is a candidate | Named board, RTL revision/configuration, firmware, RAM/peripherals, bitstream hash and reproducible boot |
 | DMA / IOMMU | Not implemented | Buffer ownership protocol and isolation tests on a named compatible platform |
-| Process lifecycle / scheduler / IPC | Bounded kernel process history with PID/PPID, runnable/running/blocked/exited/faulted state; separate address spaces and kernel stacks; shell `ps`/`jobs`, child `wait`, synchronous `exec`, async `spawn`, cross-process `kill`; x86-64 100 Hz timer-driven round-robin preemption observed in QEMU | Kernel IPC pipes and capability transfer, true blocking wait, broader isolation/fault/reclamation coverage, priorities and policy experiments |
+| Process lifecycle / scheduler / IPC | Bounded kernel process history with PID/PPID, runnable/running/blocked/exited/faulted state; separate address spaces and kernel stacks; shell `ps`/`jobs`, child `wait`, synchronous `exec`, async `spawn`, cross-process `kill`; x86-64 100 Hz timer-driven round-robin preemption observed in QEMU; bounded IPC pipes with reader/writer reference counting and waitqueue-based blocking/wakeup on empty/full | True blocking `wait`, capability transfer, broader isolation/fault/reclamation coverage, priorities and policy experiments |
 | Storage / network | Block-device API, legacy ATA PIO, polling VirtIO legacy PCI block driver, primary GPT parser, writable FAT32 VFS with nested directory listing/read/write/delete/create and per-process current directories; shell `cd`, `cd ..`, `pwd`, `ls`, `cat`, `stat`, `touch`, `rm`, `mkdir`; [QEMU storage run](../experiments/2026-11-03-qemu-storage-fs.md) | Direct multi-component paths, directory removal, multiple mounts, journaling/recovery, backup GPT recovery, modern VirtIO transport, network protocols, and reproducible workload records |
-| SDK / userland | Kernel monitor plus bounded static ELF loader; `SHELL.ELF` auto-starts from FAT32 and provides built-in commands, system reports, one-entry history, Tab completion, nested VFS commands, process controls, buffered single-process pipelines, and bounded scripts with variables, conditionals, and loops | Process IPC pipes, stable syscall/API contract, libraries, and broader development tools |
+| SDK / userland | Kernel monitor plus bounded static ELF loader; `SHELL.ELF` auto-starts from FAT32 and provides built-in commands, system reports, one-entry history, Tab completion, nested VFS commands, process controls, buffered single-process pipelines, and bounded scripts with variables, conditionals, and loops | Stable syscall/API contract, libraries, and broader development tools |
 
 Build success, boot success, functional support, and measured performance are
 separate maturity levels. A CI artifact is a build result, not proof that a
@@ -125,7 +125,9 @@ chain.
 | Capabilities | Bounded MMIO read rights, audit, revoke | Delegation, transfer, subranges, handle hardening and typed resources |
 | Scheduler | Single-CPU timer-driven preemption | Policy experiments, priorities and application-controlled scheduling |
 | Interrupts and timers | Platform controller initialization and acknowledged IRQs | IRQ capabilities, affinity, latency distributions and timer policy |
-| IPC | Bounded message passing with explicit endpoint authority | Shared memory, capability transfer, backpressure and measurements |
+| IPC | Bounded message passing with explicit endpoint authority: shared memory,
+    semaphores, signals, message queues, and bounded pipes | Capability
+    transfer, backpressure-based scheduling, handle hardening and measurements |
 | Device manager | Bounded block-device registry and PCI inventory; no general driver binding or hotplug | Stable device identity, user-space drivers, dependency and recovery policy |
 | DMA / IOMMU | Explicit buffer state and map/unmap contract | Device domains, revocation guarantees, fault handling, platform evaluation |
 | Syscalls | No user pointers in the initial MMIO syscall ABI | Validated buffer APIs, ABI versioning and compatibility policy |

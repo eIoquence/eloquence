@@ -4,11 +4,14 @@
 
 #include "domain/domain.h"
 #include "ipc.h"
+#include "process/process.h"
+#include "process/waitqueue.h"
 
 static struct ipc_shm shm_regions[IPC_MAX_SHM];
 static struct ipc_semaphore semaphores[IPC_MAX_SEMAPHORES];
 static struct ipc_signal_pending signals[IPC_MAX_SIGNALS];
 static struct ipc_msg_queue msg_queues[IPC_MAX_MSG_QUEUES];
+static struct ipc_pipe pipes[IPC_MAX_PIPES];
 
 static bool ipc_initialized = false;
 
@@ -120,8 +123,37 @@ bool ipc_init(void) {
         msg_queues[i].tail = 0;
         msg_queues[i].count = 0;
     }
+    for (uint32_t i = 0; i < IPC_MAX_PIPES; i++) {
+        pipes[i].in_use = false;
+        pipes[i].head = 0;
+        pipes[i].tail = 0;
+        pipes[i].count = 0;
+        pipes[i].readers = 0;
+        pipes[i].writers = 0;
+    }
     ipc_initialized = true;
     return true;
+}
+
+static int32_t pipe_find_by_name(const char *name) {
+    if (name == 0) {
+        return -1;
+    }
+    for (uint32_t i = 0; i < IPC_MAX_PIPES; i++) {
+        if (pipes[i].in_use && text_eq(pipes[i].name, name)) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
+}
+
+static int32_t pipe_alloc_slot(void) {
+    for (uint32_t i = 0; i < IPC_MAX_PIPES; i++) {
+        if (!pipes[i].in_use) {
+            return (int32_t)i;
+        }
+    }
+    return -1;
 }
 
 /* --- Shared memory --- */
@@ -371,5 +403,166 @@ bool ipc_mq_close(uint64_t mq_id) {
     msg_queues[mq_id].head = 0;
     msg_queues[mq_id].tail = 0;
     msg_queues[mq_id].count = 0;
+    return true;
+}
+
+/* --- Pipes --- */
+
+uint64_t ipc_pipe_create(const char *name) {
+    if (!ipc_initialized || name == 0) {
+        return IPC_PIPE_INVALID;
+    }
+    int32_t existing = pipe_find_by_name(name);
+    if (existing >= 0) {
+        /* Re-open: add a reader and writer reference to the existing pipe. */
+        pipes[existing].readers++;
+        pipes[existing].writers++;
+        return (uint64_t)existing;
+    }
+    int32_t slot = pipe_alloc_slot();
+    if (slot < 0) {
+        return IPC_PIPE_INVALID;
+    }
+    pipes[slot].in_use = true;
+    text_copy(pipes[slot].name, name, IPC_MAX_NAME);
+    pipes[slot].head = 0;
+    pipes[slot].tail = 0;
+    pipes[slot].count = 0;
+    pipes[slot].readers = 1;
+    pipes[slot].writers = 1;
+    pipes[slot].read_waitqueue = 0;
+    pipes[slot].write_waitqueue = 0;
+    if (!kernel_waitqueue_create(&pipes[slot].read_waitqueue)
+        || !kernel_waitqueue_create(&pipes[slot].write_waitqueue)) {
+        pipes[slot].in_use = false;
+        return IPC_PIPE_INVALID;
+    }
+    return (uint64_t)slot;
+}
+
+uint32_t ipc_pipe_write(uint64_t pipe_id, const uint8_t *data, uint32_t len) {
+    uint64_t process_id = 0;
+    if (!ipc_initialized || pipe_id == IPC_PIPE_INVALID
+        || pipe_id >= IPC_MAX_PIPES || data == 0 || len == 0) {
+        return 0U;
+    }
+    if (!pipes[pipe_id].in_use || pipes[pipe_id].writers == 0) {
+        return 0U; /* broken or invalid pipe */
+    }
+    process_id = kernel_domain_current_id();
+    uint32_t space = IPC_PIPE_BUFFER_SIZE - pipes[pipe_id].count;
+    if (space == 0) {
+        /* Full: block the writer until a reader frees space. */
+        (void)kernel_waitqueue_block(pipes[pipe_id].write_waitqueue,
+                                     process_id);
+        (void)kernel_process_set_blocked(process_id, true, 0);
+        return 0U; /* would block */
+    }
+    uint32_t to_write = len < space ? len : space;
+    uint32_t head = pipes[pipe_id].head;
+    for (uint32_t i = 0; i < to_write; i++) {
+        pipes[pipe_id].data[(head + i) % IPC_PIPE_BUFFER_SIZE] = data[i];
+    }
+    pipes[pipe_id].head = (head + to_write) % IPC_PIPE_BUFFER_SIZE;
+    pipes[pipe_id].count += to_write;
+    /* Wake one blocked reader, now that data is available. */
+    {
+        uint64_t woken = kernel_waitqueue_wake_one(
+            pipes[pipe_id].read_waitqueue);
+        if (woken != 0) {
+            (void)kernel_process_set_runnable(woken, true);
+        }
+    }
+    return to_write;
+}
+
+bool ipc_pipe_read(uint64_t pipe_id, uint8_t *buffer, uint32_t max_len,
+                   uint32_t *out_len) {
+    uint64_t process_id = 0;
+    if (!ipc_initialized || pipe_id == IPC_PIPE_INVALID
+        || pipe_id >= IPC_MAX_PIPES || buffer == 0 || out_len == 0) {
+        return false;
+    }
+    if (!pipes[pipe_id].in_use || pipes[pipe_id].readers == 0) {
+        return false; /* invalid or read end closed */
+    }
+    process_id = kernel_domain_current_id();
+    if (pipes[pipe_id].count == 0) {
+        /* Empty: block the reader until a writer provides data. */
+        (void)kernel_waitqueue_block(pipes[pipe_id].read_waitqueue,
+                                     process_id);
+        (void)kernel_process_set_blocked(process_id, true, 0);
+        return false; /* would block */
+    }
+    uint32_t to_read = max_len < pipes[pipe_id].count
+                           ? max_len
+                           : pipes[pipe_id].count;
+    uint32_t tail = pipes[pipe_id].tail;
+    for (uint32_t i = 0; i < to_read; i++) {
+        buffer[i] = pipes[pipe_id].data[(tail + i) % IPC_PIPE_BUFFER_SIZE];
+    }
+    pipes[pipe_id].tail = (tail + to_read) % IPC_PIPE_BUFFER_SIZE;
+    pipes[pipe_id].count -= to_read;
+    *out_len = to_read;
+    /* Wake one blocked writer, now that space is available. */
+    {
+        uint64_t woken = kernel_waitqueue_wake_one(
+            pipes[pipe_id].write_waitqueue);
+        if (woken != 0) {
+            (void)kernel_process_set_runnable(woken, true);
+        }
+    }
+    return true;
+}
+
+bool ipc_pipe_close(uint64_t pipe_id, uint32_t end) {
+    if (!ipc_initialized || pipe_id == IPC_PIPE_INVALID
+        || pipe_id >= IPC_MAX_PIPES) {
+        return false;
+    }
+    if (!pipes[pipe_id].in_use) {
+        return false;
+    }
+    if (end == IPC_PIPE_READ_END) {
+        if (pipes[pipe_id].readers > 0) {
+            pipes[pipe_id].readers--;
+        }
+        /* Writers blocked on a full pipe can now proceed (broken pipe). */
+        for (;;) {
+            uint64_t woken = kernel_waitqueue_wake_one(
+                pipes[pipe_id].write_waitqueue);
+            if (woken == 0) {
+                break;
+            }
+            (void)kernel_process_set_runnable(woken, true);
+        }
+    } else if (end == IPC_PIPE_WRITE_END) {
+        if (pipes[pipe_id].writers > 0) {
+            pipes[pipe_id].writers--;
+        }
+        /* Readers blocked on an empty pipe can now proceed (EOF). */
+        for (;;) {
+            uint64_t woken = kernel_waitqueue_wake_one(
+                pipes[pipe_id].read_waitqueue);
+            if (woken == 0) {
+                break;
+            }
+            (void)kernel_process_set_runnable(woken, true);
+        }
+    } else {
+        return false;
+    }
+    if (pipes[pipe_id].readers == 0 && pipes[pipe_id].writers == 0) {
+        pipes[pipe_id].in_use = false;
+        pipes[pipe_id].head = 0;
+        pipes[pipe_id].tail = 0;
+        pipes[pipe_id].count = 0;
+        pipes[pipe_id].readers = 0;
+        pipes[pipe_id].writers = 0;
+        (void)kernel_waitqueue_destroy(pipes[pipe_id].read_waitqueue);
+        (void)kernel_waitqueue_destroy(pipes[pipe_id].write_waitqueue);
+        pipes[pipe_id].read_waitqueue = 0;
+        pipes[pipe_id].write_waitqueue = 0;
+    }
     return true;
 }
