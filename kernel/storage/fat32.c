@@ -1131,9 +1131,16 @@ enum fat32_result fat32_read_directory_file(
                 serial_write("\n");
                 return FAT32_INVALID;
             }
+            serial_write("FAT32 read_dir: reading cluster=");
+            serial_write_decimal(cluster);
+            serial_write(" sector=");
+            serial_write_decimal(sector);
+            serial_write(" lba=");
+            serial_write_decimal(lba);
+            serial_write("\n");
             if (!block_device_read(volume->device_index, lba, 1,
                                    sector_buffer)) {
-                serial_write("FAT32 list_dir: block_device_read failed lba=");
+                serial_write("FAT32 read_dir: block_device_read failed lba=");
                 serial_write_decimal(lba);
                 serial_write("\n");
                 return FAT32_IO_ERROR;

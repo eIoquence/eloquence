@@ -1974,7 +1974,7 @@ void kmain(void) {
     __asm__ volatile ("sti" : : : "memory");
     if (block_device_count() != 0) {
         serial_write("Starting user shell from disk 0, GPT partition 1.\n");
-        run_fat32_elf(0, 1, "SHELL.ELF");
+        run_fat32_elf(0, 1, "ATMOSPH.ELF");
     }
     serial_shell_run(handle_monitor_command, 0);
 }

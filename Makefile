@@ -205,8 +205,8 @@ build/userland/atmosphere/%.o: userland/atmosphere/%.cpp include/eloquence/sysca
 	mkdir -p $(@D)
 	$(TARGET_CXX) $(USER_CXXFLAGS) -fno-exceptions -fno-rtti -fno-threadsafe-statics -c $< -o $@
 
-build/userland/atmosphere/compositor.elf: build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o userland/user.ld
-	$(TARGET_LD) $(USER_LDFLAGS) -o $@ build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o
+build/userland/atmosphere/compositor.elf: build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o build/userland/atmosphere/font.o build/userland/atmosphere/ui.o userland/user.ld
+	$(TARGET_LD) $(USER_LDFLAGS) -o $@ build/userland/atmosphere/compositor.o build/userland/atmosphere/gfx.o build/userland/atmosphere/window.o build/userland/atmosphere/font.o build/userland/atmosphere/ui.o
 
 build/userland/simple_test.o: userland/simple_test.c include/eloquence/syscall_abi.h
 	mkdir -p $(@D)

@@ -686,23 +686,64 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         }
         case ELOQUENCE_SYSCALL_GFX_GET_INFO: {
+            /* Deprecated: writing through a userspace pointer from the kernel
+             * is unsafe with separate user/kernel page tables. Use the
+             * individual GFX_GET_* syscalls (83-88) instead. */
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT, 0);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_ADDR: {
             const struct framebuffer_info *info = fb_get_info();
             if (info == 0) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                    0);
             }
-            /* rsi = pointer la struct framebuffer_info în userspace.
-             * Scriem câmpurile importante. */
-            volatile struct framebuffer_info *dst =
-                (volatile struct framebuffer_info *)(uintptr_t)frame->rsi;
-            dst->address = info->address;
-            dst->width = info->width;
-            dst->height = info->height;
-            dst->pitch = info->pitch;
-            dst->bpp = info->bpp;
-            dst->framebuffer_size = info->framebuffer_size;
-            dst->rgb = info->rgb;
-            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)(uintptr_t)info->address);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_WIDTH: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)info->width);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_HEIGHT: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)info->height);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_PITCH: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)info->pitch);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_BPP: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               (uint32_t)info->bpp);
+        }
+        case ELOQUENCE_SYSCALL_GFX_GET_SIZE: {
+            const struct framebuffer_info *info = fb_get_info();
+            if (info == 0) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
+                               info->framebuffer_size);
         }
         case ELOQUENCE_SYSCALL_GFX_DRAW_PIXEL: {
             uint64_t x = frame->rdi;

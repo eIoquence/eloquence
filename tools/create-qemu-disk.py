@@ -185,7 +185,8 @@ def make_fat32_volume(
 
 
 def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
-                 demo_elf: bytes, atmosphere_elf: bytes) -> None:
+                 demo_elf: bytes, atmosphere_elf: bytes,
+                 simple_test_elf: bytes) -> None:
     if size_mib < 64:
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
@@ -377,6 +378,12 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
             put_u32(fat, cluster * 4, next_cluster)
             image.seek((data_start + cluster - 2) * SECTOR_SIZE)
             image.write(atmosphere_elf[offset : offset + SECTOR_SIZE])
+        for index, offset in enumerate(range(0, len(simple_test_elf), SECTOR_SIZE)):
+            cluster = atmosphere_cluster_base + math.ceil(len(atmosphere_elf) / SECTOR_SIZE) + index
+            next_cluster = cluster + 1 if index + 1 < math.ceil(len(simple_test_elf) / SECTOR_SIZE) else 0x0FFFFFFF
+            put_u32(fat, cluster * 4, next_cluster)
+            image.seek((data_start + cluster - 2) * SECTOR_SIZE)
+            image.write(simple_test_elf[offset : offset + SECTOR_SIZE])
         image.seek(first_fat_sector * SECTOR_SIZE)
         image.write(fat)
         image.seek((first_fat_sector + len(fat) // SECTOR_SIZE) * SECTOR_SIZE)

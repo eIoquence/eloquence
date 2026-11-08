@@ -80,6 +80,15 @@
 #define ELOQUENCE_SYSCALL_IPC_PIPE_WRITE 80
 #define ELOQUENCE_SYSCALL_IPC_PIPE_READ 81
 #define ELOQUENCE_SYSCALL_IPC_PIPE_CLOSE 82
+/* Framebuffer info is exposed through individual register-returning syscalls
+ * (writing through a userspace pointer from the kernel is unsafe with separate
+ * user/kernel page tables). */
+#define ELOQUENCE_SYSCALL_GFX_GET_ADDR 83
+#define ELOQUENCE_SYSCALL_GFX_GET_WIDTH 84
+#define ELOQUENCE_SYSCALL_GFX_GET_HEIGHT 85
+#define ELOQUENCE_SYSCALL_GFX_GET_PITCH 86
+#define ELOQUENCE_SYSCALL_GFX_GET_BPP 87
+#define ELOQUENCE_SYSCALL_GFX_GET_SIZE 88
 
 /* FS_RAM_CONTROL operations */
 #define ELOQUENCE_RAM_OP_LIST 0U
