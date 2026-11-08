@@ -454,6 +454,12 @@ extern "C" void _start(void) {
                       gfx_rgb(0xee, 0xee, 0xee));
 
         gfx_flip();
+        serial_write("atmosphere: frame drawn\n");
+
+        /* Un singur cadru, apoi iesire curata printr-un syscall EXIT. Nu mai
+         * executam instructiuni user-mode dupa sysretq (cauza #UD in QEMU). */
+        sys2(ELOQUENCE_SYSCALL_EXIT, 0, 0);
+        for (;;) {}
     }
 
     for (;;) {}

@@ -11,6 +11,7 @@
 #define KERNEL_CAP_MMIO_BIT 0x04U
 #define KERNEL_CAP_FS_WRITE_BIT 0x08U
 #define KERNEL_CAP_IPC_BIT 0x10U
+#define KERNEL_CAP_PROCESS_BIT 0x20U
 
 uint32_t kernel_domain_caps(uint64_t domain_id);
 bool kernel_domain_grant(uint64_t domain_id, uint32_t bits);

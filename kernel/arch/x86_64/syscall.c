@@ -172,6 +172,10 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_WRITE_ABORT:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             kernel_system_file_write_abort();
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
         case ELOQUENCE_SYSCALL_PROCESS_LIST:
@@ -183,6 +187,10 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             if (frame->rdi == kernel_domain_current_id()) {
                 x86_user_mode_set_exit_status(137);
                 return ELOQUENCE_SYSCALL_EXIT_SENTINEL;
+            }
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_PROCESS_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
             }
             if (!kernel_scheduler_kill(frame->rdi)) {
                 return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
@@ -204,6 +212,10 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                (uint32_t)process_id);
         }
         case ELOQUENCE_SYSCALL_FS_COPY_BEGIN:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_copy_begin(frame->rdi,
                                                                frame->rsi,
                                                                frame->rdx)
@@ -211,6 +223,10 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
                                    : ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
                                0);
         case ELOQUENCE_SYSCALL_FS_COPY_COMMIT:
+            if (!kernel_domain_has(kernel_domain_current_id(),
+                                   KERNEL_CAP_FS_WRITE_BIT)) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_DENIED, 0);
+            }
             return pack_result(kernel_system_file_copy_commit(frame->rdi,
                                                               frame->rsi)
                                    ? ELOQUENCE_SYSCALL_RESULT_OK

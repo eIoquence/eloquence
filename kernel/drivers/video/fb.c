@@ -4,6 +4,7 @@
 
 #include <limine.h>
 
+#include "arch/x86_64/paging.h"
 #include "drivers/video/fb.h"
 
 #define PIXEL_BPP 32
@@ -24,12 +25,24 @@ bool fb_init(void) {
     if (framebuffer_request.response == 0
         || framebuffer_request.response->framebuffer_count == 0
         || framebuffer_request.response->framebuffers[0] == 0) {
-        return false;
+        /* Fallback: Limine didn't expose a framebuffer request (e.g. booting
+         * without -vga std). Use the known framebuffer address from the memory
+         * map with a standard 640x480 32-bpp mode so user-space GFX syscalls
+         * can still draw. */
+        g_fb_info.address = (void *)(uintptr_t)(x86_paging_hhdm_offset() + 0xfd000000ULL);
+        g_fb_info.width = 640;
+        g_fb_info.height = 480;
+        g_fb_info.pitch = 640U * 4U;
+        g_fb_info.bpp = 32U;
+        g_fb_info.rgb = true;
+        g_fb_info.framebuffer_size = 640U * 480U * 4U;
+        g_fb_initialized = true;
+        return true;
     }
 
     struct limine_framebuffer *fb = framebuffer_request.response->framebuffers[0];
 
-    g_fb_info.address = fb->address;
+    g_fb_info.address = (void *)(uintptr_t)(x86_paging_hhdm_offset() + (uint64_t)fb->address);
     g_fb_info.width = fb->width;
     g_fb_info.height = fb->height;
     g_fb_info.pitch = fb->pitch;

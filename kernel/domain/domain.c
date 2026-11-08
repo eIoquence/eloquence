@@ -2,6 +2,8 @@
 
 #include "domain.h"
 
+/* Identity of the domain currently executing on this CPU. Single-CPU today;
+ * future SMP work should move this to per-CPU storage (see F-05). */
 static uint64_t current_domain_id = KERNEL_DOMAIN_ID;
 
 /* capability bits (bit numbers in uint32 masks) */
@@ -10,46 +12,87 @@ static uint64_t current_domain_id = KERNEL_DOMAIN_ID;
 #define KERNEL_CAP_MMIO 0x04U
 #define KERNEL_CAP_FS_WRITE 0x08U
 #define KERNEL_CAP_IPC 0x10U
+#define KERNEL_CAP_PROCESS 0x20U
 #define KERNEL_CAP_ALL 0xFFFFFFFFU
 
-#define KERNEL_DOMAIN_TABLE_SIZE 64U
-static uint32_t domain_caps[KERNEL_DOMAIN_TABLE_SIZE];
-static bool domain_caps_seen[KERNEL_DOMAIN_TABLE_SIZE];
+/* Default capabilities: absolutely nothing except the kernel domain. Every
+ * right must be granted explicitly; there are no implicit privileges. */
+#define KERNEL_CAP_DEFAULT 0U
+#define KERNEL_CAP_KERNEL_DEFAULT KERNEL_CAP_ALL
 
-static uint32_t domain_default_caps(uint64_t domain_id) {
-    return domain_id == KERNEL_DOMAIN_ID ? KERNEL_CAP_ALL : KERNEL_CAP_ALL;
-}
+#define KERNEL_DOMAIN_TABLE_SIZE 64U
+
+struct domain_entry {
+    bool in_use;
+    uint64_t domain_id;   /* canonical id, for collision detection */
+    uint32_t caps;
+};
+
+static struct domain_entry domains[KERNEL_DOMAIN_TABLE_SIZE];
 
 static uint32_t domain_index(uint64_t domain_id) {
     return (uint32_t)(domain_id & (uint64_t)(KERNEL_DOMAIN_TABLE_SIZE - 1U));
 }
 
+static uint32_t domain_default_caps(uint64_t domain_id) {
+    return domain_id == KERNEL_DOMAIN_ID ? KERNEL_CAP_KERNEL_DEFAULT
+                                         : KERNEL_CAP_DEFAULT;
+}
+
 uint32_t kernel_domain_caps(uint64_t domain_id) {
     uint32_t index = domain_index(domain_id);
-    if (!domain_caps_seen[index]) {
-        domain_caps[index] = domain_default_caps(domain_id);
-        domain_caps_seen[index] = true;
+    struct domain_entry *entry = &domains[index];
+    if (!entry->in_use || entry->domain_id != domain_id) {
+        entry->in_use = true;
+        entry->domain_id = domain_id;
+        entry->caps = domain_default_caps(domain_id);
     }
-    return domain_caps[index];
+    return entry->caps;
 }
 
 bool kernel_domain_grant(uint64_t domain_id, uint32_t bits) {
+    uint64_t current = kernel_domain_current_id();
     uint32_t index = domain_index(domain_id);
-    if (!domain_caps_seen[index]) {
-        domain_caps[index] = domain_default_caps(domain_id);
-        domain_caps_seen[index] = true;
+    struct domain_entry *entry = &domains[index];
+
+    if (!entry->in_use || entry->domain_id != domain_id) {
+        entry->in_use = true;
+        entry->domain_id = domain_id;
+        entry->caps = domain_default_caps(domain_id);
     }
-    domain_caps[index] |= bits;
+
+    /* The kernel authority may grant any capability. Any other domain may only
+     * grant capabilities it already possesses - no self-escalation. */
+    if (current != KERNEL_DOMAIN_ID) {
+        uint32_t current_caps = kernel_domain_caps(current);
+        if ((current_caps & bits) != bits) {
+            return false; /* grantor does not hold these rights */
+        }
+        /* Only the kernel may grant administrative rights to another domain. */
+        if ((bits & KERNEL_CAP_ADMIN) != 0U && domain_id != current) {
+            return false;
+        }
+    }
+
+    entry->caps |= bits;
     return true;
 }
 
 bool kernel_domain_revoke(uint64_t domain_id, uint32_t bits) {
+    uint64_t current = kernel_domain_current_id();
     uint32_t index = domain_index(domain_id);
-    if (!domain_caps_seen[index]) {
-        domain_caps[index] = domain_default_caps(domain_id);
-        domain_caps_seen[index] = true;
+    struct domain_entry *entry = &domains[index];
+
+    if (!entry->in_use || entry->domain_id != domain_id) {
+        return false; /* unknown domain */
     }
-    domain_caps[index] &= ~bits;
+
+    /* Only the kernel may revoke administrative rights. */
+    if (current != KERNEL_DOMAIN_ID && (bits & KERNEL_CAP_ADMIN) != 0U) {
+        return false;
+    }
+
+    entry->caps &= ~bits;
     return true;
 }
 
