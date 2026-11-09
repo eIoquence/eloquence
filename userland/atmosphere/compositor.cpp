@@ -33,6 +33,48 @@ static void serial_write(const char *s) {
     while (*s) { serial_write_char(*s++); }
 }
 
+/* UPTIME_TICKS returnează numărul de tics de la boot (100 ticks/sec). */
+static uint64_t uptime_ticks(void) {
+    return sys2(ELOQUENCE_SYSCALL_UPTIME_TICKS, 0, 0);
+}
+
+/* Scrie un număr zecimal fără semn, maxim 6 cifre. */
+static void write_uint(uint64_t v) {
+    char buf[16];
+    int n = 0;
+    if (v == 0) {
+        serial_write_char('0');
+        return;
+    }
+    while (v > 0) {
+        buf[n++] = (char)('0' + (v % 10));
+        v /= 10;
+    }
+    while (n > 0) {
+        serial_write_char(buf[--n]);
+    }
+}
+
+static void write_time(void) {
+    /* 100 tics/sec */
+    uint64_t ticks = uptime_ticks();
+    uint64_t seconds = ticks / 100;
+    uint64_t hours = seconds / 3600;
+    uint64_t minutes = (seconds % 3600) / 60;
+    write_uint(hours);
+    serial_write_char(':');
+    if (minutes < 10) serial_write_char('0');
+    write_uint(minutes);
+}
+
+static void write_date(void) {
+    /* Fără calendar real: afișăm ziua aprox. din numărul de zile de la boot. */
+    uint64_t ticks = uptime_ticks();
+    uint64_t days = ticks / (100ULL * 86400ULL);
+    serial_write_char('D');
+    write_uint(days + 1);
+}
+
 extern "C" void _start(void) {
     struct gfx_info info;
     serial_write("atmosphere: entry\n");
@@ -42,10 +84,10 @@ extern "C" void _start(void) {
     }
     serial_write("atmosphere: gui started\n");
 
-    /* Draw one complete frame, then exit. Each drawing syscall is followed by
-     * a serial_write syscall to keep the syscall->sysretq cycle going, which
-     * avoids the #UD that occurs when executing user-mode instructions
-     * directly after sysretq. */
+    /* Draw one complete frame. Each drawing syscall is followed by
+     * a serial_write syscall to keep the syscall->sysretq cycle going,
+     * which avoids the #UD that occurs when executing user-mode
+     * instructions directly after sysretq. */
     gfx_clear(gfx_rgb(0x0a, 0x0a, 0x0a));
     serial_write("a\n");
 
@@ -59,24 +101,18 @@ extern "C" void _start(void) {
     /* Top bar */
     gfx_fill_rect(0, 0, info.width, 40, gfx_rgb(0x1a, 0x1a, 0x1a));
     gfx_fill_rect(0, 40, info.width, 2, gfx_rgb(0x2a, 0x2a, 0x2a));
-    font_draw_text(20, 10, "11:20 PM", gfx_rgb(0xee, 0xee, 0xee));
-    font_draw_text(20, 24, "FRI 14", gfx_rgb(0x88, 0x88, 0x88));
+    font_draw_text(20, 10, "TIME: ", gfx_rgb(0xee, 0xee, 0xee));
+    write_time();
+    serial_write("\n");
+    font_draw_text(20, 24, "DAY: ", gfx_rgb(0x88, 0x88, 0x88));
+    write_date();
     serial_write("c\n");
 
-    /* Dock */
-    uint64_t dock_w = 100, dock_x = 16, dock_y = 76, cell = 46;
+    /* Empty dock (no icons) */
+    uint64_t dock_w = 100, dock_x = 16, dock_y = 76;
     gfx_fill_rect(dock_x, dock_y, dock_w, 240, gfx_rgb(0x14, 0x14, 0x1a));
     gfx_fill_rect(dock_x, dock_y, dock_w, 2, gfx_rgb(0x2a, 0x2a, 0x2a));
     serial_write("d\n");
-
-    for (uint32_t i = 0; i < 6; i++) {
-        uint32_t col = i % 2, row = i / 2;
-        uint64_t cx = dock_x + 24 + col * cell;
-        uint64_t cy = dock_y + 30 + row * cell;
-        ui_draw_app_icon(cx, cy, 16, 0x1db954);
-        font_draw_text(cx - 10, cy + 22, "APP", gfx_rgb(0xbb, 0xbb, 0xbb));
-    }
-    serial_write("e\n");
 
     /* Taskbar */
     uint64_t tb_y = info.height - 44;
