@@ -8,6 +8,7 @@
 #include "drivers/video/fb.h"
 
 #define PIXEL_BPP 32
+#define RGB(r, g, b) (((r) << 16) | ((g) << 8) | (b))
 
 static volatile struct limine_framebuffer_request framebuffer_request = {
     .id = LIMINE_FRAMEBUFFER_REQUEST_ID,
@@ -116,4 +117,69 @@ bool fb_clear(uint32_t color) {
 bool fb_flip(void) {
     /* Framebuffer simplu: nu este nevoie de flip. */
     return g_fb_initialized;
+}
+
+/* Desenează un cadru complet al desktop-ului în modul kernel (evită round-trip-uri
+ * în userspace între operațiuni de desenare, care ar cauza #UD după sysretq). */
+bool kernel_gfx_draw_frame(void) {
+    if (!g_fb_initialized) {
+        return false;
+    }
+    if (!g_fb_initialized) {
+        return false;
+    }
+
+    /* Background gradient */
+    for (uint64_t y = 0; y < g_fb_info.height; y += 8) {
+        uint8_t b = (uint8_t)(10 + (y * 50 / (g_fb_info.height ? g_fb_info.height : 1)));
+        fb_fill_rect(0, y, g_fb_info.width, 8, RGB(0x05, 0x07, b));
+    }
+
+    /* Top bar */
+    fb_fill_rect(0, 0, g_fb_info.width, 40, RGB(0x1a, 0x1a, 0x2a));
+    fb_fill_rect(0, 40, g_fb_info.width, 2, RGB(0x2a, 0x2a, 0x3a));
+    /* Time and date placeholder */
+    fb_fill_rect(20, 10, 60, 8, RGB(0x2a, 0x2a, 0x3a));
+    fb_fill_rect(20, 24, 60, 8, RGB(0x2a, 0x2a, 0x3a));
+
+    /* Dock (empty placeholders) */
+    uint64_t dock_w = 120, dock_x = 20, dock_y = 76, cell = 48;
+    fb_fill_rect(dock_x, dock_y, dock_w, 200, RGB(0x1a, 0x1a, 0x22));
+    fb_fill_rect(dock_x, dock_y, dock_w, 2, RGB(0x3a, 0x3a, 0x3a));
+
+    for (uint32_t i = 0; i < 4; i++) {
+        uint32_t col = i % 2, row = i / 2;
+        uint64_t cx = dock_x + 24 + col * cell;
+        uint64_t cy = dock_y + 30 + row * cell;
+        fb_fill_rect(cx - 12, cy - 12, 24, 24, RGB(0x2a, 0x2a, 0x32));
+        fb_fill_rect(cx - 8, cy - 8, 16, 16, RGB(0x1a, 0x1a, 0x1a));
+    }
+
+    /* Music widget */
+    uint64_t my = dock_y + 200;
+    fb_fill_rect(dock_x, my, dock_w, 64, RGB(0x1a, 0x1a, 0x22));
+    fb_fill_rect(dock_x + 28, my + 32, 16, 16, RGB(0x1d, 0xb9, 0x54));
+    fb_fill_rect(dock_x + 52, my + 14, 64, 8, RGB(0x2a, 0x2a, 0x3a));
+    fb_fill_rect(dock_x + 52, my + 34, 64, 8, RGB(0x2a, 0x2a, 0x3a));
+
+    /* Notifications */
+    uint64_t ny = my + 76;
+    fb_fill_rect(dock_x, ny, dock_w, 40, RGB(0x1a, 0x1a, 0x22));
+    fb_fill_rect(dock_x + 16, ny + 10, 140, 8, RGB(0x2a, 0x2a, 0x3a));
+    fb_fill_rect(dock_x + 78, ny + 20, 10, 10, RGB(0x55, 0x55, 0x55));
+
+    /* Taskbar */
+    uint64_t tb_y = g_fb_info.height - 44;
+    fb_fill_rect(0, tb_y, g_fb_info.width, 44, RGB(0x1a, 0x1a, 0x1a));
+    fb_fill_rect(0, tb_y, g_fb_info.width, 2, RGB(0x2a, 0x2a, 0x3a));
+    fb_fill_rect(14, tb_y + 10, 24, 24, RGB(0x2a, 0x2a, 0x3a));
+    fb_fill_rect(26, tb_y + 22, 10, 10, RGB(0xee, 0xee, 0xee));
+    fb_fill_rect(g_fb_info.width - 130, tb_y + 22, 10, 10, RGB(0x88, 0x88, 0x88));
+    fb_fill_rect(g_fb_info.width - 110, tb_y + 10, 40, 8, RGB(0x2a, 0x2a, 0x3a));
+
+    /* Mouse cursor (centered) */
+    fb_fill_rect(g_fb_info.width / 2 - 4, g_fb_info.height / 2 - 4, 8, 8,
+                  RGB(0xee, 0xee, 0xee));
+
+    return fb_flip();
 }

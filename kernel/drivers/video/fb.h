@@ -48,4 +48,8 @@ bool fb_clear(uint32_t color);
 /* Sincronizează afișarea (dummy pentru framebuffer simplu, disponibil pentru dublu-buffer viitor). */
 bool fb_flip(void);
 
+/* Desenează un cadru complet al desktop-ului în modul kernel (evită round-trip-uri
+ * în userspace între operațiuni de desenare, care ar cauza #UD după sysretq). */
+bool kernel_gfx_draw_frame(void);
+
 #endif

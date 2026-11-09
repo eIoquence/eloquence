@@ -761,6 +761,17 @@ uint64_t x86_syscall_dispatch(const struct x86_syscall_frame *frame) {
             return pack_result(ELOQUENCE_SYSCALL_RESULT_OK,
                                info->framebuffer_size);
         }
+        case ELOQUENCE_SYSCALL_GFX_FRAME: {
+            /* NOTE: serial_write() I/O polling is required here to prevent
+             * a #UD on sysretq after framebuffer writes. Root cause under
+             * investigation; this serializing I/O sequence works around it. */
+            serial_write("gfx_frame\n");
+            if (!kernel_gfx_draw_frame()) {
+                return pack_result(ELOQUENCE_SYSCALL_RESULT_INVALID_ARGUMENT,
+                                   0);
+            }
+            return pack_result(ELOQUENCE_SYSCALL_RESULT_OK, 0);
+        }
         case ELOQUENCE_SYSCALL_GFX_DRAW_PIXEL: {
             uint64_t x = frame->rdi;
             uint64_t y = frame->rsi;
