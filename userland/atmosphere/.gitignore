@@ -1,0 +1,4 @@
+.zig-cache/
+compositor
+compositor_zig.elf
+zig-out/
