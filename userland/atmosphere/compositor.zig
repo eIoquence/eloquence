@@ -3,26 +3,22 @@ const Serial = @import("serial.zig");
 const Gfx = @import("gfx.zig");
 const Input = @import("input.zig");
 
-/// Desenează un cadru desktop simplu (doar dreptunghiuri, fără fonturi care
-/// ar necesita caractere bitmap în kernel).
+/// Desenează un cadru desktop simplu (doar dreptunghiuri).
 fn drawFrame() void {
-    const info_ptr = std.heap.page_allocator.alloc(Gfx.GfxInfo, 1) catch return;
-    defer std.heap.page_allocator.free(info_ptr);
-
-    const info = info_ptr.*;
-    if (!Gfx.gfxGetInfo(&info)) {
+    var gfx_info = Gfx.GfxInfo{};
+    if (!Gfx.gfxGetInfo(&gfx_info)) {
         Serial.serialWrite("compositor: gfxGetInfo failed\n");
         return;
     }
 
-    const width = info.width;
-    const height = info.height;
+    const width = gfx_info.width;
+    const height = gfx_info.height;
 
-    // Background gradient (nuancier albastru-închis)
+    // Background gradient
     var y: u64 = 0;
     while (y < height) : (y += 8) {
         const h8 = if (height == 0) 1 else height;
-        const b = @intCast(@truncate((10 + (y * 50 / h8)) % 256));
+        const b: u8 = @as(u8, @truncate((10 + (y * 50 / h8)) % 256));
         _ = Gfx.gfxFillRect(0, y, width, 8, Gfx.gfxRgb(5, 7, b));
     }
 
@@ -30,7 +26,7 @@ fn drawFrame() void {
     _ = Gfx.gfxFillRect(0, 0, width, 40, Gfx.gfxRgb(0x1a, 0x1a, 0x2a));
     _ = Gfx.gfxFillRect(0, 40, width, 2, Gfx.gfxRgb(0x2a, 0x2a, 0x3a));
 
-    // Placeholder-uri pentru ore și dată (dreptunghiuri gri)
+    // Placeholder-uri pentru ore și dată
     _ = Gfx.gfxFillRect(20, 10, 60, 8, Gfx.gfxRgb(0x2a, 0x2a, 0x3a));
     _ = Gfx.gfxFillRect(20, 24, 60, 8, Gfx.gfxRgb(0x2a, 0x2a, 0x3a));
 
@@ -46,8 +42,8 @@ fn drawFrame() void {
     while (i < 4) : (i += 1) {
         const col = i % 2;
         const row = i / 2;
-        const cx = dock_x + 24 + @intCast(col) * cell;
-        const cy = dock_y + 30 + @intCast(row) * cell;
+        const cx = dock_x + 24 + @as(u64, @intCast(col)) * cell;
+        const cy = dock_y + 30 + @as(u64, @intCast(row)) * cell;
         _ = Gfx.gfxFillRect(cx - 12, cy - 12, 24, 24, Gfx.gfxRgb(0x2a, 0x2a, 0x32));
         _ = Gfx.gfxFillRect(cx - 8, cy - 8, 16, 16, Gfx.gfxRgb(0x1a, 0x1a, 0x1a));
     }
@@ -76,13 +72,13 @@ fn handleInputEvent(event: Input.InputEvent) void {
     Serial.serialWrite(" code=");
     Serial.serialWriteDec(@intCast(event.key_code));
     Serial.serialWrite(" x=");
-    Serial.serialWriteDec(@intCast(@bitCast(u32, event.x)));
+    Serial.serialWriteDec(@intCast(event.x));
     Serial.serialWrite(" y=");
-    Serial.serialWriteDec(@intCast(@bitCast(u32, event.y)));
+    Serial.serialWriteDec(@intCast(event.y));
     Serial.serialWrite("\n");
 }
 
-pub export fn _start() noreturn void {
+pub export fn _start() void {
     Serial.serialWrite("atmosphere: entry\n");
     Serial.serialWrite("atmosphere: gui started\n");
 
