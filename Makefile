@@ -215,12 +215,15 @@ build/userland/simple_test.o: userland/simple_test.c include/eloquence/syscall_a
 build/userland/simple_test.elf: build/userland/simple_test.o userland/user.ld
 	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
 
-# Zig-based atmosphere compositor (construits cu `zig build` daca zig este disponibil).
+# Zig-based atmosphere compositor (construits cu `zig build-exe` daca zig este disponibil).
 # Inlocuieste versiunea C++ in imaginea de disk daca este prezent.
-build/userland/atmosphere/compositor_zig.elf: $(wildcard userland/atmosphere/*.zig)
+# Depinde de syscall.o (compilat cu clang) si compune direct cu zig build-exe.
+build/userland/atmosphere/compositor_zig.elf: $(wildcard userland/atmosphere/*.zig) userland/atmosphere/syscall.S
 	@if command -v zig >/dev/null 2>&1; then \
-		cd userland/atmosphere && zig build -Dtarget=x86_64-freestanding.elf -O ReleaseSmall && \
-		cp zig-out/bin/compositor $@; \
+		cd userland/atmosphere && \
+		clang -target x86_64-freestanding -c syscall.S -o syscall.o && \
+		zig build-exe compositor.zig -target x86_64-freestanding-none -O ReleaseSmall --name compositor syscall.o && \
+		cp compositor $@; \
 	else \
 		echo "zig not found, skipping Zig compositor build" >&2; \
 		exit 0; \
