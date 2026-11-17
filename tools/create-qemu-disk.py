@@ -185,8 +185,8 @@ def make_fat32_volume(
 
 
 def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
-                 demo_elf: bytes, atmosphere_elf: bytes,
-                 simple_test_elf: bytes) -> None:
+                 demo_elf: bytes, simple_test_elf: bytes,
+                 atmosphere_elf: bytes = b"") -> None:
     if size_mib < 64:
         raise ValueError("the FAT32 fixture needs at least 64 MiB")
     if path.exists() and not force:
@@ -195,8 +195,6 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
         raise ValueError("the shell ELF must not be empty")
     if not demo_elf:
         raise ValueError("the demo ELF must not be empty")
-    if not atmosphere_elf:
-        raise ValueError("the atmosphere ELF must not be empty")
 
     total_sectors = size_mib * 1024 * 1024 // SECTOR_SIZE
     backup_header_lba = total_sectors - 1
@@ -231,7 +229,10 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
     spin_elf = make_spin_elf()
     spin_cluster = 5 + math.ceil(len(shell_elf) / SECTOR_SIZE)
     script_cluster = spin_cluster + 1
-    atmosphere_cluster_base = demo_cluster_base + math.ceil(len(demo_elf) / SECTOR_SIZE)
+    if atmosphere_elf:
+        atmosphere_cluster_base = demo_cluster_base + math.ceil(len(demo_elf) / SECTOR_SIZE)
+    else:
+        atmosphere_cluster_base = script_cluster + 1
 
     mode = "wb" if force else "xb"
     path.parent.mkdir(parents=True, exist_ok=True)
@@ -305,11 +306,12 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
         put_u16(root, 180, 0)
         put_u16(root, 186, demo_cluster_base)
         put_u32(root, 188, len(demo_elf))
-        root[192:203] = b"ATMOSPH ELF"
-        root[203] = 0x20
-        put_u16(root, 212, 0)
-        put_u16(root, 218, atmosphere_cluster_base)
-        put_u32(root, 220, len(atmosphere_elf))
+        if atmosphere_elf:
+            root[192:203] = b"ATMOSPH ELF"
+            root[203] = 0x20
+            put_u16(root, 212, 0)
+            put_u16(root, 218, atmosphere_cluster_base)
+            put_u32(root, 220, len(atmosphere_elf))
         image.write(root)
         image.seek(volume_offset + 7 * SECTOR_SIZE)
         image.write(fs_info)
@@ -348,11 +350,12 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
         put_u16(root, 180, 0)
         put_u16(root, 186, demo_cluster_base)
         put_u32(root, 188, len(demo_elf))
-        root[192:203] = b"ATMOSPH ELF"
-        root[203] = 0x20
-        put_u16(root, 212, 0)
-        put_u16(root, 218, atmosphere_cluster_base)
-        put_u32(root, 220, len(atmosphere_elf))
+        if atmosphere_elf:
+            root[192:203] = b"ATMOSPH ELF"
+            root[203] = 0x20
+            put_u16(root, 212, 0)
+            put_u16(root, 218, atmosphere_cluster_base)
+            put_u32(root, 220, len(atmosphere_elf))
         image.write(root)
         image.seek((data_start + 1) * SECTOR_SIZE)
         image.write(HELLO_TEXT)
@@ -372,12 +375,13 @@ def create_image(path: Path, size_mib: int, force: bool, shell_elf: bytes,
             put_u32(fat, cluster * 4, next_cluster)
             image.seek((data_start + cluster - 2) * SECTOR_SIZE)
             image.write(demo_elf[offset : offset + SECTOR_SIZE])
-        for index, offset in enumerate(range(0, len(atmosphere_elf), SECTOR_SIZE)):
-            cluster = atmosphere_cluster_base + index
-            next_cluster = cluster + 1 if index + 1 < math.ceil(len(atmosphere_elf) / SECTOR_SIZE) else 0x0FFFFFFF
-            put_u32(fat, cluster * 4, next_cluster)
-            image.seek((data_start + cluster - 2) * SECTOR_SIZE)
-            image.write(atmosphere_elf[offset : offset + SECTOR_SIZE])
+        if atmosphere_elf:
+            for index, offset in enumerate(range(0, len(atmosphere_elf), SECTOR_SIZE)):
+                cluster = atmosphere_cluster_base + index
+                next_cluster = cluster + 1 if index + 1 < math.ceil(len(atmosphere_elf) / SECTOR_SIZE) else 0x0FFFFFFF
+                put_u32(fat, cluster * 4, next_cluster)
+                image.seek((data_start + cluster - 2) * SECTOR_SIZE)
+                image.write(atmosphere_elf[offset : offset + SECTOR_SIZE])
         for index, offset in enumerate(range(0, len(simple_test_elf), SECTOR_SIZE)):
             cluster = atmosphere_cluster_base + math.ceil(len(atmosphere_elf) / SECTOR_SIZE) + index
             next_cluster = cluster + 1 if index + 1 < math.ceil(len(simple_test_elf) / SECTOR_SIZE) else 0x0FFFFFFF
@@ -396,11 +400,14 @@ def main() -> None:
     parser.add_argument("--size-mib", type=int, default=64)
     parser.add_argument("--shell", type=Path, required=True)
     parser.add_argument("--demo", type=Path, required=True)
-    parser.add_argument("--atmosphere", type=Path, required=True)
+    parser.add_argument("--simple-test", type=Path, required=True)
+    parser.add_argument("--atmosphere", type=Path)
     parser.add_argument("--force", action="store_true")
     args = parser.parse_args()
+    atmosphere_bytes = args.atmosphere.read_bytes() if args.atmosphere else b""
     create_image(args.image, args.size_mib, args.force, args.shell.read_bytes(),
-                 args.demo.read_bytes(), args.atmosphere.read_bytes())
+                 args.demo.read_bytes(), args.simple_test.read_bytes(),
+                 atmosphere_bytes)
     print(f"Created {args.image} ({args.size_mib} MiB, GPT + FAT32)")
 
 

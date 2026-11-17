@@ -209,21 +209,7 @@ build/userland/simple_test.o: userland/simple_test.c include/eloquence/syscall_a
 build/userland/simple_test.elf: build/userland/simple_test.o userland/user.ld
 	$(TARGET_LD) $(USER_LDFLAGS) -o $@ $<
 
-# Zig-based atmosphere compositor (construits cu `zig build-exe` daca zig este disponibil).
-# Inlocuieste versiunea C++ in imaginea de disk daca este prezent.
-# Depinde de syscall.o (compilat cu clang) si compune direct cu zig build-exe.
-build/userland/atmosphere/compositor_zig.elf: $(wildcard userland/atmosphere/*.zig) userland/atmosphere/syscall.S
-	@if command -v zig >/dev/null 2>&1; then \
-		cd userland/atmosphere && \
-		clang -target x86_64-freestanding -c syscall.S -o syscall.o && \
-		zig build-exe compositor.zig -target x86_64-freestanding-none -O ReleaseSmall --name compositor syscall.o && \
-		cp compositor $@; \
-	else \
-		echo "zig not found, skipping Zig compositor build" >&2; \
-		exit 0; \
-	fi
-
-userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor_zig.elf build/userland/simple_test.elf
+userland-elf: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/simple_test.elf
 
 build/eloquence.elf: $(KERNEL_OBJECTS) linker.ld
 	$(TARGET_LD) $(TARGET_LDFLAGS) -o $@ $(KERNEL_OBJECTS)
@@ -243,12 +229,10 @@ build/eloquence.iso: $(LIMINE) build/eloquence.elf limine.conf
 	$(LIMINE) bios-install $@
 	rm -rf build/iso-root
 
-qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor_zig.elf build/userland/simple_test.elf
-	@ATMOSPHERE_ELF="build/userland/atmosphere/compositor_zig.elf"; \
+qemu-disk: build/userland/shell.elf build/userland/ipc_demo.elf build/userland/simple_test.elf
 	$(PYTHON) tools/create-qemu-disk.py "$(QEMU_DISK)" \
 		--shell build/userland/shell.elf \
 		--demo build/userland/ipc_demo.elf \
-		--atmosphere "$$ATMOSPHERE_ELF" \
 		--simple-test build/userland/simple_test.elf --force
 
 run: build/eloquence.iso qemu-disk

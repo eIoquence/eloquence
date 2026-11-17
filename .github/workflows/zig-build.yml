@@ -1,4 +1,4 @@
-name: Zig Build
+name: Build
 
 on:
   push:
@@ -12,20 +12,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - name: Install Zig
-        uses: goto-bus-stop/setup-zig@v2
-        with:
-          version: 0.13.0
-
-      - name: Build atmosphere compositor (Zig)
-        run: |
-          cd userland/atmosphere
-          zig build -Dtarget=x86_64-freestanding.elf -O ReleaseSmall || true
-          ls -la zig-out/bin/ 2>/dev/null || echo "No zig-out (expected if build.zig needs adjustments)"
-
       - name: Build kernel + userland C/C++ (Makefile)
         run: |
-          make build/userland/shell.elf build/userland/ipc_demo.elf build/userland/atmosphere/compositor.elf
+          make build/userland/shell.elf build/userland/ipc_demo.elf build/userland/simple_test.elf
 
       - name: Build QEMU disk image
         run: |
